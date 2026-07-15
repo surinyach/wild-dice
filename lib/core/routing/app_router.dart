@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
-import '../../features/main_menu/presentation/pages/action_placeholder_page.dart';
+import '../../features/create_game/presentation/pages/create_game_page.dart';
+import '../../features/join_game/presentation/pages/join_game_page.dart';
 import '../../features/main_menu/presentation/pages/main_menu_page.dart';
 
 class AppRouter {
@@ -8,17 +9,44 @@ class AppRouter {
   static const createGame = '/create-game';
   static const joinGame = '/join-game';
 
-  static Map<String, WidgetBuilder> get routes => {
-    mainMenu: (_) => const MainMenuPage(),
-    createGame: (_) => const ActionPlaceholderPage(
-      title: 'Create Game',
-      message: 'This is where game setup will start in the next story.',
-      icon: Icons.add_circle_outline,
-    ),
-    joinGame: (_) => const ActionPlaceholderPage(
-      title: 'Join Game',
-      message: 'This is where players will enter a specific game.',
-      icon: Icons.login_rounded,
-    ),
-  };
+  static Route<void> onGenerateRoute(RouteSettings settings) {
+    final page = switch (settings.name) {
+      mainMenu => const MainMenuPage(),
+      createGame => const CreateGamePage(),
+      joinGame => const JoinGamePage(),
+      _ => null,
+    };
+
+    if (page == null) {
+      return MaterialPageRoute<void>(
+        settings: settings,
+        builder: (_) => const MainMenuPage(),
+      );
+    }
+
+    return PageRouteBuilder<void>(
+      settings: settings,
+      transitionDuration: const Duration(milliseconds: 320),
+      reverseTransitionDuration: const Duration(milliseconds: 240),
+      pageBuilder: (_, _, _) => page,
+      transitionsBuilder: (_, animation, _, child) {
+        final curvedAnimation = CurvedAnimation(
+          parent: animation,
+          curve: Curves.easeOutCubic,
+          reverseCurve: Curves.easeInCubic,
+        );
+
+        return FadeTransition(
+          opacity: curvedAnimation,
+          child: SlideTransition(
+            position: Tween<Offset>(
+              begin: const Offset(0.04, 0),
+              end: Offset.zero,
+            ).animate(curvedAnimation),
+            child: child,
+          ),
+        );
+      },
+    );
+  }
 }
