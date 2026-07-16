@@ -12,7 +12,7 @@ class App extends StatelessWidget {
       title: 'Aguántame El Cubata',
       theme: AppTheme.light,
       initialRoute: AppRouter.mainMenu,
-      routes: AppRouter.routes,
+      onGenerateRoute: AppRouter.onGenerateRoute,
     );
   }
 }
