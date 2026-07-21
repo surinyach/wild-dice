@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "929386302424",
+    "project_id": "challenge-app-d20ba",
+    "storage_bucket": "challenge-app-d20ba.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:929386302424:android:cb1945ac0c16b808fb00ad",
+        "android_client_info": {
+          "package_name": "com.example.challenge_app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAZEM9ZUOxW8DCVzqmvSHqctnjkrUt2MO0"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
