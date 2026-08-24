@@ -32,9 +32,4 @@ class FirebaseAuthService {
 
   /// Returns the verified Firebase identity for the current session.
   String? get currentUserId => currentUser?.uid;
-
-  /// Signs out the current user.
-  Future<void> signOut() {
-    return _auth.signOut();
-  }
 }
