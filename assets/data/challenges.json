@@ -1,0 +1,17 @@
+[
+  {
+    "id": "challenge_001",
+    "text": "Do 10 squats",
+    "type": "normal"
+  },
+  {
+    "id": "challenge_002",
+    "text": "Sing the chorus of a song chosen by the group",
+    "type": "wild"
+  },
+  {
+    "id": "challenge_003",
+    "text": "Challenge another player to a staring contest",
+    "type": "pvp"
+  }
+]
