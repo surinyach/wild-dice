@@ -100,13 +100,48 @@ implementation easier to replace or extend.
 ## Cloud Firestore
 
 Cloud Firestore is enabled through the Firebase Console and serves as the
-application's cloud database. It will be used to store and synchronize
-application data as persistence requirements are introduced.
+application's cloud database. Game and player persistence is centralized in
+`lib/services/game_service.dart`; widgets must not access Firestore directly.
 
-The `cloud_firestore` package provides the Flutter APIs for accessing
-collections, documents, queries, and real-time data streams. Data models,
-collection paths, security rules, and repository-level Firestore operations
-should be documented as those features are implemented.
+The `cloud_firestore` package provides collections, documents, transactions,
+atomic batches, and realtime streams.
+
+### Game Collection
+
+```text
+games/{gameId}
+  code: string
+  status: lobby | in_progress | finished | cancelled
+  hostUid: Firebase UID
+  currentRound: integer
+  totalRounds: integer
+  createdAt: server timestamp
+  updatedAt: server timestamp
+
+games/{gameId}/players/{playerId}
+  ownerUid: Firebase UID
+  nickname: string
+  avatarId: string
+  score: integer
+```
+
+New games start in `lobby` at round zero. The creator's anonymous UID is stored
+in `hostUid`, and the service generates five-character codes such as `A7K92`.
+
+The player document ID is the current Firebase UID. New players start with a
+score of zero. Rejoining updates nickname and avatar without resetting an
+existing score. Joining and leaving update the game's `updatedAt`.
+
+### Game Data Access
+
+`GameService` creates games, finds them by normalized `code`, joins and
+leaves games, and streams game and player changes. It ensures authentication
+before ownership or membership writes and converts Firebase failures into
+`GameServiceException`.
+
+UI code consumes these methods and streams instead of constructing Firestore
+paths or parsing snapshots. See `docs/game_service.md` for the complete API
+walkthrough.
 
 ## Generated Configuration Files
 
@@ -167,6 +202,6 @@ docs/
 Firebase has been integrated into the Flutter application and initializes during
 startup. The application reuses the current authenticated user or creates an
 anonymous identity when no session exists, and the Firebase UID is available
-through the authentication service. Cloud Firestore is enabled and its network
-client is prepared for future multiplayer data persistence and synchronization.
+through the authentication service. Cloud Firestore now stores games and nested
+players through `GameService`, which also provides realtime synchronization.
 Firebase Storage remains intentionally excluded from the MVP.
