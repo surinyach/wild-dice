@@ -135,7 +135,16 @@ class GamePlayer {
 }
 
 /// Centralizes Firestore access for games and their player subcollections.
-class GameService {
+abstract interface class GameCreator {
+  Future<Game> createGame({
+    required String nickname,
+    required String avatarId,
+    int totalRounds = 5,
+    String? code,
+  });
+}
+
+class GameService implements GameCreator {
   GameService({
     FirebaseFirestore? firestore,
     FirebaseAuthService? authService,
@@ -164,6 +173,7 @@ class GameService {
   CollectionReference<Map<String, dynamic>> get _games =>
       _firestore.collection(gamesCollection);
 
+  @override
   Future<Game> createGame({
     required String nickname,
     required String avatarId,

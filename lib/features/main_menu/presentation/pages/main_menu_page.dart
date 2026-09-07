@@ -5,19 +5,27 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
+import '../../../../core/assets/app_assets.dart';
 import '../../../../core/routing/app_router.dart';
+import '../../../../shared/widgets/jungle_background.dart';
+import '../../../../shared/widgets/wild_dice_logo.dart';
+import '../../domain/main_menu_identity.dart';
 
 class MainMenuPage extends StatelessWidget {
-  const MainMenuPage({super.key});
+  const MainMenuPage({required this.identityController, super.key});
+
+  final MainMenuIdentityController identityController;
 
   @override
   Widget build(BuildContext context) {
-    return const MainMenu();
+    return MainMenu(identityController: identityController);
   }
 }
 
 class MainMenu extends StatefulWidget {
-  const MainMenu({super.key});
+  const MainMenu({required this.identityController, super.key});
+
+  final MainMenuIdentityController identityController;
 
   @override
   State<MainMenu> createState() => _MainMenuState();
@@ -25,6 +33,7 @@ class MainMenu extends StatefulWidget {
 
 class _MainMenuState extends State<MainMenu> with TickerProviderStateMixin {
   late final AnimationController _entranceController;
+  late final TextEditingController _nicknameController;
 
   @override
   void initState() {
@@ -34,11 +43,15 @@ class _MainMenuState extends State<MainMenu> with TickerProviderStateMixin {
       vsync: this,
       duration: const Duration(milliseconds: 850),
     )..forward();
+    _nicknameController = TextEditingController(
+      text: widget.identityController.nickname,
+    );
   }
 
   @override
   void dispose() {
     _entranceController.dispose();
+    _nicknameController.dispose();
     super.dispose();
   }
 
@@ -52,7 +65,7 @@ class _MainMenuState extends State<MainMenu> with TickerProviderStateMixin {
           backgroundColor: const Color(0xFF11162D),
           body: Stack(
             children: [
-              const Positioned.fill(child: _JungleBackgroundImage()),
+              const Positioned.fill(child: JungleBackground()),
               SafeArea(
                 child: Center(
                   child: ConstrainedBox(
@@ -71,7 +84,13 @@ class _MainMenuState extends State<MainMenu> with TickerProviderStateMixin {
                             animation: _entranceController,
                             compact: compact,
                           ),
-                          SizedBox(height: compact ? 14 : 28),
+                          SizedBox(height: compact ? 8 : 16),
+                          _IdentityPicker(
+                            identityController: widget.identityController,
+                            nicknameController: _nicknameController,
+                            compact: compact,
+                          ),
+                          const SizedBox(height: 14),
                           _ButtonsEntrance(
                             animation: _entranceController,
                             child: Column(
@@ -111,6 +130,511 @@ class _MainMenuState extends State<MainMenu> with TickerProviderStateMixin {
   }
 }
 
+class _IdentityPicker extends StatelessWidget {
+  const _IdentityPicker({
+    required this.identityController,
+    required this.nicknameController,
+    required this.compact,
+  });
+
+  final MainMenuIdentityController identityController;
+  final TextEditingController nicknameController;
+  final bool compact;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListenableBuilder(
+      listenable: identityController,
+      builder: (context, _) => LayoutBuilder(
+        builder: (context, constraints) {
+          final screenSize = MediaQuery.sizeOf(context);
+          final availableWidth = constraints.maxWidth.isFinite
+              ? constraints.maxWidth
+              : screenSize.width;
+          final width = math.min(availableWidth, screenSize.width) * 0.9;
+          final height = screenSize.height < 650
+              ? 62.0
+              : screenSize.height < 700
+              ? 80.0
+              : 86.0;
+
+          return Center(
+            child: SizedBox(
+              width: width,
+              height: height,
+              child: Stack(
+                children: [
+                  Positioned.fill(
+                    top: 8,
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(24),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.38),
+                            blurRadius: 18,
+                            offset: const Offset(0, 8),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  Positioned.fill(
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(22),
+                        border: Border.all(
+                          color: const Color(0xFFBDBAB2),
+                          width: 2,
+                        ),
+                        color: const Color(0xFFD5D2CA),
+                      ),
+                    ),
+                  ),
+                  Positioned.fill(
+                    child: Padding(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: compact ? 12 : 16,
+                      ),
+                      child: Row(
+                        children: [
+                          Semantics(
+                            key: const Key('avatar-picker'),
+                            button: true,
+                            label: 'Choose avatar',
+                            child: Material(
+                              color: Colors.transparent,
+                              child: InkWell(
+                                customBorder: const CircleBorder(),
+                                onTap: () => _showAvatarCarousel(
+                                  context,
+                                  identityController,
+                                ),
+                                child: Stack(
+                                  clipBehavior: Clip.none,
+                                  children: [
+                                    CircleAvatar(
+                                      radius: compact ? 22 : 28,
+                                      backgroundColor: const Color(0xFFE3DED2),
+                                      backgroundImage: AssetImage(
+                                        AppAssets.avatars[identityController
+                                            .avatarId]!,
+                                      ),
+                                    ),
+                                    const Positioned(
+                                      right: -3,
+                                      bottom: -3,
+                                      child: CircleAvatar(
+                                        radius: 10,
+                                        backgroundColor: Color(0xFF8BCB2A),
+                                        child: Icon(
+                                          Icons.edit,
+                                          size: 11,
+                                          color: Colors.white,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                          SizedBox(width: compact ? 12 : 16),
+                          Expanded(
+                            child: TextField(
+                              key: const Key('nickname-field'),
+                              controller: nicknameController,
+                              maxLength: 20,
+                              onChanged: identityController.updateNickname,
+                              textInputAction: TextInputAction.done,
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                color: const Color(0xFF2B2A24),
+                                fontSize: compact ? 17 : 20,
+                                fontWeight: FontWeight.w700,
+                              ),
+                              decoration: const InputDecoration(
+                                hintText: 'your name',
+                                hintStyle: TextStyle(
+                                  color: Color(0xFF9B9B96),
+                                  fontWeight: FontWeight.w500,
+                                ),
+                                counterText: '',
+                                border: InputBorder.none,
+                                enabledBorder: InputBorder.none,
+                                focusedBorder: InputBorder.none,
+                                isDense: true,
+                                contentPadding: EdgeInsets.zero,
+                              ),
+                            ),
+                          ),
+                          SizedBox(width: compact ? 56 : 72),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
+Future<void> _showAvatarCarousel(
+  BuildContext context,
+  MainMenuIdentityController identityController,
+) {
+  return showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    isDismissible: true,
+    enableDrag: true,
+    useSafeArea: true,
+    barrierColor: Colors.black.withValues(alpha: 0.68),
+    backgroundColor: Colors.transparent,
+    builder: (context) => FractionallySizedBox(
+      heightFactor: 0.62,
+      child: _AvatarCarouselSheet(identityController: identityController),
+    ),
+  );
+}
+
+class _AvatarCarouselSheet extends StatefulWidget {
+  const _AvatarCarouselSheet({required this.identityController});
+
+  final MainMenuIdentityController identityController;
+
+  @override
+  State<_AvatarCarouselSheet> createState() => _AvatarCarouselSheetState();
+}
+
+class _AvatarCarouselSheetState extends State<_AvatarCarouselSheet> {
+  static const _avatarNames = <String, String>{
+    'avatar_01': 'JAGUAR',
+    'avatar_02': 'BLACK PANTHER',
+    'avatar_03': 'KOALA',
+    'avatar_04': 'WOLF',
+    'avatar_05': 'FROG',
+    'avatar_06': 'CROCODILE',
+    'avatar_07': 'TOUCAN',
+    'avatar_08': 'MONKEY',
+    'avatar_09': 'PANDA',
+    'avatar_10': 'SNAKE',
+  };
+
+  late final List<MapEntry<String, String>> _avatars;
+  late final PageController _pageController;
+  late int _selectedIndex;
+
+  @override
+  void initState() {
+    super.initState();
+    _avatars = AppAssets.avatars.entries.toList(growable: false);
+    _selectedIndex = _avatars.indexWhere(
+      (entry) => entry.key == widget.identityController.avatarId,
+    );
+    if (_selectedIndex < 0) _selectedIndex = 0;
+    _pageController = PageController(
+      initialPage: _selectedIndex,
+      viewportFraction: 0.22,
+    );
+  }
+
+  @override
+  void dispose() {
+    _pageController.dispose();
+    super.dispose();
+  }
+
+  void _select(int index) {
+    if (index < 0 || index >= _avatars.length) return;
+    setState(() => _selectedIndex = index);
+    widget.identityController.updateAvatar(_avatars[index].key);
+  }
+
+  void _move(int direction) {
+    final next = (_selectedIndex + direction).clamp(0, _avatars.length - 1);
+    if (next == _selectedIndex) return;
+    _pageController.animateToPage(
+      next,
+      duration: const Duration(milliseconds: 320),
+      curve: Curves.easeOutCubic,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final selected = _avatars[_selectedIndex];
+    return Material(
+      color: Colors.transparent,
+      child: ClipRRect(
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(34)),
+        child: DecoratedBox(
+          decoration: const BoxDecoration(color: Color(0xFF102E1D)),
+          child: Stack(
+            children: [
+              SafeArea(
+                top: false,
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    final compact = constraints.maxHeight < 470;
+                    return Column(
+                      children: [
+                        const SizedBox(height: 10),
+                        Container(
+                          width: 48,
+                          height: 5,
+                          decoration: BoxDecoration(
+                            color: const Color(
+                              0xFFB9C6A9,
+                            ).withValues(alpha: .5),
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                        ),
+                        SizedBox(height: compact ? 10 : 16),
+                        Text(
+                          'CHOOSE YOUR AVATAR',
+                          style: GoogleFonts.lilitaOne(
+                            color: const Color(0xFFF3E5B8),
+                            fontSize: compact ? 22 : 28,
+                            letterSpacing: 1.1,
+                            shadows: const [
+                              Shadow(
+                                color: Colors.black54,
+                                offset: Offset(0, 2),
+                              ),
+                            ],
+                          ),
+                        ),
+                        SizedBox(height: compact ? 6 : 12),
+                        Expanded(
+                          child: Stack(
+                            alignment: Alignment.center,
+                            children: [
+                              PageView.builder(
+                                key: const Key('avatar-carousel'),
+                                controller: _pageController,
+                                physics: const BouncingScrollPhysics(),
+                                onPageChanged: _select,
+                                itemCount: _avatars.length,
+                                itemBuilder: (context, index) {
+                                  final isSelected = index == _selectedIndex;
+                                  final entry = _avatars[index];
+                                  return Center(
+                                    child: GestureDetector(
+                                      onTap: () {
+                                        if (isSelected) return;
+                                        _pageController.animateToPage(
+                                          index,
+                                          duration: const Duration(
+                                            milliseconds: 320,
+                                          ),
+                                          curve: Curves.easeOutCubic,
+                                        );
+                                      },
+                                      child: AnimatedScale(
+                                        scale: isSelected ? 1.28 : 0.88,
+                                        duration: const Duration(
+                                          milliseconds: 260,
+                                        ),
+                                        curve: Curves.easeOutBack,
+                                        child: AnimatedOpacity(
+                                          opacity: isSelected ? 1 : 0.62,
+                                          duration: const Duration(
+                                            milliseconds: 220,
+                                          ),
+                                          child: _AvatarMedallion(
+                                            imagePath: entry.value,
+                                            name: _avatarNames[entry.key]!,
+                                            selected: isSelected,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  );
+                                },
+                              ),
+                              Positioned(
+                                left: 10,
+                                child: _CarouselArrow(
+                                  icon: Icons.chevron_left_rounded,
+                                  label: 'Previous avatar',
+                                  enabled: _selectedIndex > 0,
+                                  onPressed: () => _move(-1),
+                                ),
+                              ),
+                              Positioned(
+                                right: 10,
+                                child: _CarouselArrow(
+                                  icon: Icons.chevron_right_rounded,
+                                  label: 'Next avatar',
+                                  enabled: _selectedIndex < _avatars.length - 1,
+                                  onPressed: () => _move(1),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        AnimatedSwitcher(
+                          duration: const Duration(milliseconds: 180),
+                          child: Text(
+                            _avatarNames[selected.key]!,
+                            key: ValueKey(selected.key),
+                            style: GoogleFonts.lilitaOne(
+                              color: const Color(0xFFF3E5B8),
+                              fontSize: compact ? 20 : 25,
+                              letterSpacing: 1,
+                            ),
+                          ),
+                        ),
+                        SizedBox(height: compact ? 5 : 9),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: List.generate(
+                            _avatars.length,
+                            (index) => AnimatedContainer(
+                              key: Key('avatar-indicator-$index'),
+                              duration: const Duration(milliseconds: 220),
+                              width: index == _selectedIndex ? 10 : 6,
+                              height: index == _selectedIndex ? 10 : 6,
+                              margin: const EdgeInsets.symmetric(horizontal: 3),
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: index == _selectedIndex
+                                    ? const Color(0xFF9DDB2F)
+                                    : const Color(0xFF76866B),
+                              ),
+                            ),
+                          ),
+                        ),
+                        SizedBox(height: compact ? 8 : 14),
+                        SizedBox(
+                          width: 150,
+                          height: 44,
+                          child: FilledButton.icon(
+                            key: const Key('confirm-avatar'),
+                            onPressed: () => Navigator.of(context).pop(),
+                            style: FilledButton.styleFrom(
+                              backgroundColor: const Color(0xFF4D7D1A),
+                              foregroundColor: Colors.white,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(22),
+                                side: const BorderSide(
+                                  color: Color(0xFF91B83B),
+                                  width: 2,
+                                ),
+                              ),
+                            ),
+                            icon: const Icon(Icons.check_rounded, size: 20),
+                            label: Text(
+                              'CHOOSE',
+                              style: GoogleFonts.lilitaOne(letterSpacing: .8),
+                            ),
+                          ),
+                        ),
+                        SizedBox(height: compact ? 8 : 14),
+                      ],
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _AvatarMedallion extends StatelessWidget {
+  const _AvatarMedallion({
+    required this.imagePath,
+    required this.name,
+    required this.selected,
+  });
+
+  final String imagePath;
+  final String name;
+  final bool selected;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      image: true,
+      selected: selected,
+      label: name,
+      child: Container(
+        width: 92,
+        height: 92,
+        padding: const EdgeInsets.all(5),
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: selected ? const Color(0xFF9DDB2F) : const Color(0xFF76512D),
+          border: Border.all(
+            color: selected ? const Color(0xFFC4F75A) : const Color(0xFFA9824B),
+            width: selected ? 4 : 3,
+          ),
+          boxShadow: [
+            const BoxShadow(
+              color: Colors.black54,
+              blurRadius: 10,
+              offset: Offset(0, 6),
+            ),
+            if (selected)
+              const BoxShadow(color: Color(0x889DDB2F), blurRadius: 18),
+          ],
+        ),
+        child: ClipOval(
+          child: ColoredBox(
+            color: const Color(0xFF17271B),
+            child: Image.asset(imagePath, fit: BoxFit.cover),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _CarouselArrow extends StatelessWidget {
+  const _CarouselArrow({
+    required this.icon,
+    required this.label,
+    required this.enabled,
+    required this.onPressed,
+  });
+
+  final IconData icon;
+  final String label;
+  final bool enabled;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      button: true,
+      enabled: enabled,
+      label: label,
+      child: IconButton.filled(
+        onPressed: enabled ? onPressed : null,
+        icon: Icon(icon),
+        style: IconButton.styleFrom(
+          minimumSize: const Size.square(46),
+          backgroundColor: const Color(0xFF3D6C1D),
+          disabledBackgroundColor: const Color(0xFF294322),
+          foregroundColor: Colors.white,
+          disabledForegroundColor: Colors.white38,
+          side: const BorderSide(color: Color(0xFF739832), width: 2),
+          shadowColor: Colors.black,
+          elevation: 6,
+        ),
+      ),
+    );
+  }
+}
+
 class AnimatedLogo extends StatelessWidget {
   const AnimatedLogo({
     required this.animation,
@@ -135,33 +659,7 @@ class AnimatedLogo extends StatelessWidget {
           begin: const Offset(0, -0.18),
           end: Offset.zero,
         ).animate(curved),
-        child: _GeneratedWildDiceLogo(size: compact ? 330 : 450),
-      ),
-    );
-  }
-}
-
-class _GeneratedWildDiceLogo extends StatelessWidget {
-  const _GeneratedWildDiceLogo({required this.size});
-
-  final double size;
-
-  @override
-  Widget build(BuildContext context) {
-    return Semantics(
-      label: 'WILD DICE',
-      child: ExcludeSemantics(
-        child: RepaintBoundary(
-          child: SizedBox(
-            width: size,
-            height: size,
-            child: Image.asset(
-              'assets/images/wild_dice_logo.png',
-              fit: BoxFit.contain,
-              filterQuality: FilterQuality.high,
-            ),
-          ),
-        ),
+        child: WildDiceLogo(size: compact ? 330 : 450),
       ),
     );
   }

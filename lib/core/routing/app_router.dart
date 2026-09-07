@@ -1,26 +1,45 @@
 import 'package:flutter/material.dart';
 
 import '../../features/create_game/presentation/pages/create_game_page.dart';
+import '../../features/game_lobby/presentation/pages/game_lobby_page.dart';
 import '../../features/join_game/presentation/pages/join_game_page.dart';
+import '../../features/main_menu/domain/main_menu_identity.dart';
 import '../../features/main_menu/presentation/pages/main_menu_page.dart';
+import '../../services/game_service.dart';
 
 class AppRouter {
+  const AppRouter({
+    required this.identityController,
+    required this.gameService,
+  });
+
   static const mainMenu = '/';
   static const createGame = '/create-game';
   static const joinGame = '/join-game';
+  static const gameLobby = '/game-lobby';
 
-  static Route<void> onGenerateRoute(RouteSettings settings) {
+  final MainMenuIdentityController identityController;
+  final GameCreator gameService;
+
+  Route<void> onGenerateRoute(RouteSettings settings) {
     final page = switch (settings.name) {
-      mainMenu => const MainMenuPage(),
-      createGame => const CreateGamePage(),
+      mainMenu => MainMenuPage(identityController: identityController),
+      createGame => CreateGamePage(
+        identityController: identityController,
+        gameService: gameService,
+      ),
       joinGame => const JoinGamePage(),
+      gameLobby when settings.arguments is Game => GameLobbyPage(
+        game: settings.arguments! as Game,
+        identityController: identityController,
+      ),
       _ => null,
     };
 
     if (page == null) {
       return MaterialPageRoute<void>(
         settings: settings,
-        builder: (_) => const MainMenuPage(),
+        builder: (_) => MainMenuPage(identityController: identityController),
       );
     }
 
