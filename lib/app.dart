@@ -7,7 +7,7 @@ import 'services/game_service.dart';
 class App extends StatefulWidget {
   const App({this.gameService, this.identityController, super.key});
 
-  final GameCreator? gameService;
+  final GameClient? gameService;
   final MainMenuIdentityController? identityController;
 
   @override
@@ -17,7 +17,7 @@ class App extends StatefulWidget {
 class _AppState extends State<App> {
   late final MainMenuIdentityController _identity =
       widget.identityController ?? MainMenuIdentityController();
-  late final GameCreator _gameService = widget.gameService ?? GameService();
+  late final GameClient _gameService = widget.gameService ?? GameService();
 
   @override
   void dispose() {
