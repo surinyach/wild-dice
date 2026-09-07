@@ -71,7 +71,7 @@ void main() {
   testWidgets(
     'creates a game with the selected rounds and main-menu identity',
     (tester) async {
-      final creator = _FakeGameClient();
+      final creator = _FakeGameCreator();
       final identity = MainMenuIdentityController(
         nickname: 'Jungle Hero',
         avatarId: 'avatar_03',
@@ -111,7 +111,7 @@ void main() {
   ) async {
     final identity = MainMenuIdentityController(avatarId: 'avatar_01');
     await tester.pumpWidget(
-      App(gameService: _FakeGameClient(), identityController: identity),
+      App(gameService: _FakeGameCreator(), identityController: identity),
     );
     await tester.pump(const Duration(seconds: 1));
 
@@ -142,29 +142,22 @@ void main() {
     await tester.tap(find.text('JOIN GAME'));
     await tester.pumpAndSettle();
 
-    expect(find.byKey(const Key('game-code-field')), findsOneWidget);
+    expect(find.text('Joining a game is coming soon.'), findsOneWidget);
     await tester.tap(find.byTooltip('Back to main menu'));
     await tester.pumpAndSettle();
     expect(find.text('CREATE GAME'), findsOneWidget);
   });
 }
 
-App _testApp([GameClient? creator]) => App(
-  gameService: creator ?? _FakeGameClient(),
+App _testApp([GameCreator? creator]) => App(
+  gameService: creator ?? _FakeGameCreator(),
   identityController: MainMenuIdentityController(),
 );
 
-class _FakeGameClient implements GameClient {
-  @override
-  Future<Game?> findGameByJoinCode(String code) async => null;
+class _FakeGameCreator implements GameCreator {
+  _FakeGameCreator({this.result});
 
-  @override
-  Future<void> joinGame(
-    String gameId, {
-    required String nickname,
-    required String avatarId,
-  }) async {}
-
+  final Future<Game>? result;
   String? nickname;
   String? avatarId;
   int? totalRounds;
@@ -179,16 +172,17 @@ class _FakeGameClient implements GameClient {
     this.nickname = nickname;
     this.avatarId = avatarId;
     this.totalRounds = totalRounds;
-    return Future.value(
-      Game(
-        id: 'game-1',
-        code: 'A7K92',
-        status: GameStatus.lobby,
-        hostUid: 'anonymous-user',
-        currentRound: 0,
-        totalRounds: totalRounds,
-        data: const {},
-      ),
-    );
+    return result ??
+        Future.value(
+          Game(
+            id: 'game-1',
+            code: 'A7K92',
+            status: GameStatus.lobby,
+            hostUid: 'anonymous-user',
+            currentRound: 0,
+            totalRounds: totalRounds,
+            data: const {},
+          ),
+        );
   }
 }

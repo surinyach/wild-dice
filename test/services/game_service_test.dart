@@ -111,48 +111,6 @@ void main() {
   });
 
   group('joinGame', () {
-    for (final status in [
-      GameStatus.inProgress,
-      GameStatus.finished,
-      GameStatus.cancelled,
-    ]) {
-      test('rejects ${status.value} even after a lobby lookup', () async {
-        final game = await service.createGame(
-          nickname: 'Host',
-          avatarId: 'avatar_01',
-          code: 'A7K92',
-        );
-        expect(
-          (await service.findGameByJoinCode('A7K92'))?.status,
-          GameStatus.lobby,
-        );
-        final document = firestore
-            .collection(GameService.gamesCollection)
-            .doc(game.id);
-        await document.update({GameService.statusField: status.value});
-        final guestService = GameService(
-          firestore: firestore,
-          authService: FirebaseAuthService(
-            auth: MockFirebaseAuth(
-              mockUser: MockUser(uid: 'guest', isAnonymous: true),
-              signedIn: true,
-            ),
-          ),
-        );
-        await expectLater(
-          guestService.joinGame(
-            game.id,
-            nickname: 'Guest',
-            avatarId: 'avatar_03',
-          ),
-          throwsA(_serviceError(GameServiceErrorCode.gameUnavailable)),
-        );
-        final players = await service.watchPlayers(game.id).first;
-        expect(players, hasLength(1));
-        expect(players.single.nickname, 'Host');
-      });
-    }
-
     test('creates a player with the current anonymous UID', () async {
       final game = await service.createGame(
         nickname: 'Host',

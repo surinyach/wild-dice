@@ -7,7 +7,6 @@ enum GameServiceErrorCode {
   authentication,
   invalidArgument,
   gameNotFound,
-  gameUnavailable,
   joinCodeUnavailable,
   firestore,
   unknown,
@@ -145,18 +144,7 @@ abstract interface class GameCreator {
   });
 }
 
-abstract interface class GameJoiner {
-  Future<Game?> findGameByJoinCode(String code);
-  Future<void> joinGame(
-    String gameId, {
-    required String nickname,
-    required String avatarId,
-  });
-}
-
-abstract interface class GameClient implements GameCreator, GameJoiner {}
-
-class GameService implements GameClient {
+class GameService implements GameCreator {
   GameService({
     FirebaseFirestore? firestore,
     FirebaseAuthService? authService,
@@ -230,7 +218,6 @@ class GameService implements GameClient {
     return Game.fromSnapshot(await game.get());
   });
 
-  @override
   Future<Game?> findGameByJoinCode(String code) => _guard(() async {
     final result = await _games
         .where(codeField, isEqualTo: _normalizeCode(code))
@@ -239,7 +226,6 @@ class GameService implements GameClient {
     return result.docs.isEmpty ? null : Game.fromSnapshot(result.docs.first);
   });
 
-  @override
   Future<void> joinGame(
     String gameId, {
     required String nickname,
@@ -256,12 +242,6 @@ class GameService implements GameClient {
         throw const GameServiceException(
           GameServiceErrorCode.gameNotFound,
           'The game does not exist.',
-        );
-      }
-      if (gameSnapshot.data()?[statusField] != GameStatus.lobby.value) {
-        throw const GameServiceException(
-          GameServiceErrorCode.gameUnavailable,
-          'This game is no longer available to join.',
         );
       }
       final playerSnapshot = await transaction.get(player);
