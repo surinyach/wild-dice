@@ -1,5 +1,9 @@
 abstract final class AppAssets {
   static const challenges = 'assets/data/challenges.json';
+  static const gameLobbyBackground =
+      'assets/images/game-lobby-cave-background.png';
+  static const gameLobbyBackgroundLandscape =
+      'assets/images/game-lobby-cave-background-landscape.png';
 
   static const avatars = <String, String>{
     'avatar_01': 'assets/avatars/avatar_01.png',
