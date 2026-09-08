@@ -7,7 +7,10 @@ enum GameServiceErrorCode {
   authentication,
   invalidArgument,
   gameNotFound,
+  gameUnavailable,
   joinCodeUnavailable,
+  notHost,
+  invalidState,
   firestore,
   unknown,
 }
@@ -144,7 +147,29 @@ abstract interface class GameCreator {
   });
 }
 
-class GameService implements GameCreator {
+abstract interface class GameJoiner {
+  Future<Game?> findGameByJoinCode(String code);
+  Future<void> joinGame(
+    String gameId, {
+    required String nickname,
+    required String avatarId,
+  });
+}
+
+abstract interface class GameLobbyReader {
+  String? get currentUserId;
+  Stream<List<GamePlayer>> watchPlayers(String gameId);
+  Stream<Game?> watchGame(String gameId);
+  Future<void> leaveGame(String gameId);
+  Future<void> startGame(String gameId);
+}
+
+abstract interface class GameSession
+    implements GameCreator, GameJoiner, GameLobbyReader {}
+
+abstract interface class GameClient implements GameSession {}
+
+class GameService implements GameClient {
   GameService({
     FirebaseFirestore? firestore,
     FirebaseAuthService? authService,
@@ -158,6 +183,7 @@ class GameService implements GameCreator {
   static const codeField = 'code';
   static const statusField = 'status';
   static const hostUidField = 'hostUid';
+  static const playerOrderField = 'playerOrder';
   static const currentRoundField = 'currentRound';
   static const totalRoundsField = 'totalRounds';
   static const ownerUidField = 'ownerUid';
@@ -170,6 +196,8 @@ class GameService implements GameCreator {
   final FirebaseFirestore _firestore;
   final FirebaseAuthService _auth;
   final Random _random;
+  @override
+  String? get currentUserId => _auth.currentUserId;
   CollectionReference<Map<String, dynamic>> get _games =>
       _firestore.collection(gamesCollection);
 
@@ -203,6 +231,7 @@ class GameService implements GameCreator {
       codeField: normalizedCode,
       statusField: GameStatus.lobby.value,
       hostUidField: owner.uid,
+      playerOrderField: [owner.uid],
       currentRoundField: 0,
       totalRoundsField: totalRounds,
       createdAtField: FieldValue.serverTimestamp(),
@@ -218,6 +247,7 @@ class GameService implements GameCreator {
     return Game.fromSnapshot(await game.get());
   });
 
+  @override
   Future<Game?> findGameByJoinCode(String code) => _guard(() async {
     final result = await _games
         .where(codeField, isEqualTo: _normalizeCode(code))
@@ -226,6 +256,7 @@ class GameService implements GameCreator {
     return result.docs.isEmpty ? null : Game.fromSnapshot(result.docs.first);
   });
 
+  @override
   Future<void> joinGame(
     String gameId, {
     required String nickname,
@@ -244,6 +275,14 @@ class GameService implements GameCreator {
           'The game does not exist.',
         );
       }
+      final storedGame = Game.fromSnapshot(gameSnapshot);
+      if (storedGame.status != GameStatus.lobby) {
+        throw const GameServiceException(
+          GameServiceErrorCode.gameUnavailable,
+          'This game is no longer available to join.',
+        );
+      }
+      final playerOrder = _playerOrder(storedGame);
       final playerSnapshot = await transaction.get(player);
       transaction.set(player, {
         ownerUidField: user.uid,
@@ -253,10 +292,44 @@ class GameService implements GameCreator {
             ? playerSnapshot.data()![scoreField]
             : 0,
       }, SetOptions(merge: true));
-      transaction.update(game, {updatedAtField: FieldValue.serverTimestamp()});
+      transaction.update(game, {
+        playerOrderField: playerOrder.contains(user.uid)
+            ? playerOrder
+            : [...playerOrder, user.uid],
+        updatedAtField: FieldValue.serverTimestamp(),
+      });
     });
   });
 
+  /// Atomically starts a lobby. Repeated starts are successful no-ops.
+  @override
+  Future<void> startGame(String gameId) => _guard(() async {
+    _validateId(gameId);
+    final user = await _auth.ensureAnonymousUser();
+    final reference = _games.doc(gameId);
+    await _firestore.runTransaction((transaction) async {
+      final game = Game.fromSnapshot(await transaction.get(reference));
+      if (game.hostUid != user.uid) {
+        throw const GameServiceException(
+          GameServiceErrorCode.notHost,
+          'Only the host can start the game.',
+        );
+      }
+      if (game.status == GameStatus.inProgress) return;
+      if (game.status != GameStatus.lobby) {
+        throw const GameServiceException(
+          GameServiceErrorCode.invalidState,
+          'This game can no longer be started.',
+        );
+      }
+      transaction.update(reference, {
+        statusField: GameStatus.inProgress.value,
+        updatedAtField: FieldValue.serverTimestamp(),
+      });
+    });
+  });
+
+  @override
   Stream<Game?> watchGame(String gameId) {
     try {
       _validateId(gameId);
@@ -269,6 +342,7 @@ class GameService implements GameCreator {
     }
   }
 
+  @override
   Stream<List<GamePlayer>> watchPlayers(String gameId) {
     try {
       _validateId(gameId);
@@ -286,15 +360,48 @@ class GameService implements GameCreator {
     }
   }
 
+  @override
   Future<void> leaveGame(String gameId) => _guard(() async {
     _validateId(gameId);
     final user = await _auth.ensureAnonymousUser();
     final game = _games.doc(gameId);
-    final batch = _firestore.batch();
-    batch.delete(game.collection(playersCollection).doc(user.uid));
-    batch.update(game, {updatedAtField: FieldValue.serverTimestamp()});
-    await batch.commit();
+    await _firestore.runTransaction((transaction) async {
+      final storedGame = Game.fromSnapshot(await transaction.get(game));
+      _requireLobby(storedGame);
+      final playerOrder = _playerOrder(storedGame);
+      if (!playerOrder.contains(user.uid)) return;
+      final remaining = playerOrder.where((uid) => uid != user.uid).toList();
+      transaction.delete(game.collection(playersCollection).doc(user.uid));
+      transaction.update(game, {
+        playerOrderField: remaining,
+        hostUidField: remaining.isEmpty ? storedGame.hostUid : remaining.first,
+        statusField: remaining.isEmpty
+            ? GameStatus.cancelled.value
+            : GameStatus.lobby.value,
+        updatedAtField: FieldValue.serverTimestamp(),
+      });
+    });
   });
+
+  static void _requireLobby(Game game) {
+    if (game.status != GameStatus.lobby) {
+      throw const GameServiceException(
+        GameServiceErrorCode.invalidState,
+        'Players can only join or leave a game in the lobby.',
+      );
+    }
+  }
+
+  static List<String> _playerOrder(Game game) {
+    final order = game.data[playerOrderField];
+    if (order is! List || order.any((uid) => uid is! String)) {
+      throw const GameServiceException(
+        GameServiceErrorCode.firestore,
+        'The game has no valid player order. Please create a new game.',
+      );
+    }
+    return order.cast<String>();
+  }
 
   Future<String> _availableCode() async {
     for (var attempt = 0; attempt < 8; attempt++) {

@@ -19,7 +19,7 @@ class AppRouter {
   static const gameLobby = '/game-lobby';
 
   final MainMenuIdentityController identityController;
-  final GameCreator gameService;
+  final GameSession gameService;
 
   Route<void> onGenerateRoute(RouteSettings settings) {
     final page = switch (settings.name) {
@@ -28,10 +28,13 @@ class AppRouter {
         identityController: identityController,
         gameService: gameService,
       ),
-      joinGame => const JoinGamePage(),
+      joinGame => JoinGamePage(
+        identityController: identityController,
+        gameService: gameService,
+      ),
       gameLobby when settings.arguments is Game => GameLobbyPage(
         game: settings.arguments! as Game,
-        identityController: identityController,
+        gameService: gameService,
       ),
       _ => null,
     };

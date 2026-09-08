@@ -47,6 +47,7 @@ void main() {
         GameService.codeField,
         GameService.statusField,
         GameService.hostUidField,
+        GameService.playerOrderField,
         GameService.currentRoundField,
         GameService.totalRoundsField,
         GameService.createdAtField,
@@ -54,6 +55,7 @@ void main() {
       });
       expect(gameData[GameService.statusField], 'lobby');
       expect(gameData[GameService.hostUidField], uid);
+      expect(gameData[GameService.playerOrderField], [uid]);
 
       final hostData =
           (await firestore
@@ -96,6 +98,63 @@ void main() {
     });
   });
 
+  group('startGame', () {
+    test(
+      'updates both realtime listeners and repeated starts are no-ops',
+      () async {
+        final game = await service.createGame(nickname: 'Host', avatarId: 'a');
+        final first = service
+            .watchGame(game.id)
+            .firstWhere((game) => game?.status == GameStatus.inProgress);
+        final second = service
+            .watchGame(game.id)
+            .firstWhere((game) => game?.status == GameStatus.inProgress);
+        await service.startGame(game.id);
+        expect((await first)?.status, GameStatus.inProgress);
+        expect((await second)?.status, GameStatus.inProgress);
+        final reference = firestore.collection('games').doc(game.id);
+        final started = (await reference.get()).data();
+        await service.startGame(game.id);
+        expect((await reference.get()).data(), started);
+        expect(started?['currentRound'], 0);
+      },
+    );
+
+    test('rejects non-host, closed, missing and invalid games', () async {
+      final game = await service.createGame(nickname: 'Host', avatarId: 'a');
+      final guest = GameService(
+        firestore: firestore,
+        authService: FirebaseAuthService(
+          auth: MockFirebaseAuth(
+            mockUser: MockUser(uid: 'guest'),
+            signedIn: true,
+          ),
+        ),
+      );
+      await expectLater(
+        guest.startGame(game.id),
+        throwsA(_serviceError(GameServiceErrorCode.notHost)),
+      );
+      for (final status in [GameStatus.finished, GameStatus.cancelled]) {
+        await firestore.collection('games').doc(game.id).update({
+          'status': status.value,
+        });
+        await expectLater(
+          service.startGame(game.id),
+          throwsA(_serviceError(GameServiceErrorCode.invalidState)),
+        );
+      }
+      await expectLater(
+        service.startGame('missing'),
+        throwsA(_serviceError(GameServiceErrorCode.gameNotFound)),
+      );
+      await expectLater(
+        service.startGame('bad/id'),
+        throwsA(_serviceError(GameServiceErrorCode.invalidArgument)),
+      );
+    });
+  });
+
   group('findGameByJoinCode', () {
     test('normalizes the code and returns null when absent', () async {
       final created = await service.createGame(
@@ -111,6 +170,46 @@ void main() {
   });
 
   group('joinGame', () {
+    for (final status in [
+      GameStatus.inProgress,
+      GameStatus.finished,
+      GameStatus.cancelled,
+    ]) {
+      test('rejects ${status.value} even after a lobby lookup', () async {
+        final game = await service.createGame(
+          nickname: 'Host',
+          avatarId: 'avatar_01',
+          code: 'A7K92',
+        );
+        expect(
+          (await service.findGameByJoinCode('A7K92'))?.status,
+          GameStatus.lobby,
+        );
+        await firestore
+            .collection(GameService.gamesCollection)
+            .doc(game.id)
+            .update({GameService.statusField: status.value});
+        final guestService = GameService(
+          firestore: firestore,
+          authService: FirebaseAuthService(
+            auth: MockFirebaseAuth(
+              mockUser: MockUser(uid: 'guest', isAnonymous: true),
+              signedIn: true,
+            ),
+          ),
+        );
+        await expectLater(
+          guestService.joinGame(
+            game.id,
+            nickname: 'Guest',
+            avatarId: 'avatar_03',
+          ),
+          throwsA(_serviceError(GameServiceErrorCode.gameUnavailable)),
+        );
+        expect(await service.watchPlayers(game.id).first, hasLength(1));
+      });
+    }
+
     test('creates a player with the current anonymous UID', () async {
       final game = await service.createGame(
         nickname: 'Host',
@@ -147,6 +246,16 @@ void main() {
         GameService.avatarIdField: 'avatar_02',
         GameService.scoreField: 0,
       });
+      await secondService.joinGame(
+        game.id,
+        nickname: 'Player again',
+        avatarId: 'avatar_02',
+      );
+      expect(
+        (await service.watchGame(game.id).first)?.data[GameService
+            .playerOrderField],
+        [uid, secondUid],
+      );
     });
 
     test('preserves an existing score when a player rejoins', () async {
@@ -275,6 +384,10 @@ void main() {
       await service.leaveGame(game.id);
 
       expect((await playerDocument.get()).exists, isFalse);
+      final remainingGame = (await gameDocument.get()).data()!;
+      expect(remainingGame[GameService.playerOrderField], isEmpty);
+      expect(remainingGame[GameService.statusField], 'cancelled');
+      expect(remainingGame[GameService.hostUidField], uid);
       expect(
         (await gameDocument.get()).data()![GameService.updatedAtField],
         isNotNull,
@@ -283,6 +396,67 @@ void main() {
   });
 
   group('validation', () {
+    test(
+      'joining and leaving a started game do not change membership',
+      () async {
+        final game = await service.createGame(nickname: 'Host', avatarId: 'a');
+        await service.startGame(game.id);
+        await expectLater(
+          service.joinGame(game.id, nickname: 'Host', avatarId: 'b'),
+          throwsA(_serviceError(GameServiceErrorCode.gameUnavailable)),
+        );
+        await expectLater(
+          service.leaveGame(game.id),
+          throwsA(_serviceError(GameServiceErrorCode.invalidState)),
+        );
+        expect(
+          (await service.watchPlayers(game.id).first).single.avatarId,
+          'a',
+        );
+        expect(
+          (await service.watchGame(game.id).first)?.data[GameService
+              .playerOrderField],
+          [uid],
+        );
+      },
+    );
+
+    test(
+      'leaving preserves order and transfers host to the first remaining player',
+      () async {
+        final game = await service.createGame(nickname: 'Host', avatarId: 'a');
+        GameService asUser(String id) => GameService(
+          firestore: firestore,
+          authService: FirebaseAuthService(
+            auth: MockFirebaseAuth(mockUser: MockUser(uid: id), signedIn: true),
+          ),
+        );
+        final second = asUser('second');
+        final third = asUser('third');
+        await second.joinGame(game.id, nickname: 'Second', avatarId: 'b');
+        await third.joinGame(game.id, nickname: 'Third', avatarId: 'c');
+        await third.leaveGame(game.id);
+        final reference = firestore.collection('games').doc(game.id);
+        var updated = Game.fromSnapshot(await reference.get());
+        expect(updated.hostUid, uid);
+        expect(updated.data[GameService.playerOrderField], [uid, 'second']);
+        await service.leaveGame(game.id);
+        updated = Game.fromSnapshot(await reference.get());
+        expect(updated.hostUid, 'second');
+        expect(updated.status, GameStatus.lobby);
+        expect(updated.data[GameService.playerOrderField], ['second']);
+        expect(
+          (await second.watchPlayers(game.id).first).single.ownerUid,
+          'second',
+        );
+        await second.startGame(game.id);
+        expect(
+          Game.fromSnapshot(await reference.get()).status,
+          GameStatus.inProgress,
+        );
+      },
+    );
+
     test('rejects invalid game IDs in operations and streams', () {
       expect(
         () => service.joinGame(

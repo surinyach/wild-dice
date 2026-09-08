@@ -17,6 +17,7 @@ games/{gameId}
   code: string
   status: lobby | in_progress | finished | cancelled
   hostUid: string
+  playerOrder: list of Firebase UIDs in join order
   currentRound: integer
   totalRounds: integer
   createdAt: server timestamp
@@ -110,9 +111,9 @@ await service.joinGame(
 
 The service validates the ID, ensures authentication, and starts a transaction.
 It reads the game and player, produces `gameNotFound` when the game is absent,
-then merges a player document identified by the current UID. New players start
-with `score: 0`; existing scores survive a repeated join. The transaction also
-updates the game's `updatedAt` timestamp.
+requires lobby status, then merges a player document identified by the current
+UID. New players start with `score: 0`; existing scores survive a repeated join. The transaction also
+appends the UID to `playerOrder` only if absent and updates `updatedAt`.
 
 ## Listening to Game Changes
 
@@ -163,12 +164,10 @@ Each player provides:
 await service.leaveGame(game.id);
 ```
 
-The service validates the game ID, obtains the current UID, and deletes that
-user's player document in a batch that also updates the game's `updatedAt`.
-The game must still exist for this batch to succeed.
-
-Leaving intentionally does not delete the game or transfer ownership. Those
-behaviors are gameplay policies and belong in a later use case.
+The service uses a transaction to require lobby status, remove the current UID
+from `playerOrder`, delete their player document, and update `updatedAt`.
+The first remaining player becomes host. If no players remain, the game becomes
+`cancelled` and retains the previous host UID, matching the Firebase rules.
 
 ## Returned Models
 
@@ -281,3 +280,22 @@ Static analysis found no issues and all existing tests passed.
 The work belongs on `feature/game-service` and targets `develop`. Commit,
 push, pull-request review, and merge are repository workflow steps. None of
 these require Firebase Console or Security Rules changes.
+
+## Starting a Game
+
+`GameSession` exposes the authenticated user ID, the existing `watchGame`
+stream, and `startGame(gameId)` for the lobby. `GameService` implements it.
+Starting uses a transaction that checks the authenticated host and changes
+`lobby` to `in_progress`, updating `updatedAt`. An already started game is a
+no-op; finished/cancelled games produce `invalidState`, and other users receive
+`notHost`. Rounds and players remain unchanged.
+
+The lobby subscribes on entry and cancels on disposal. Both hosts and guests
+replace the lobby route with a gameplay placeholder when the stream reports
+`in_progress`. The start button is disabled until the stream is ready, for
+non-hosts, and while starting. Update failures show a retryable error; stream
+failures expose a resubscribe action. Navigation follows the shared stream.
+
+The current Join Game page is still a placeholder. Guest transition behavior
+is covered by opening the lobby directly in widget tests; end-to-end joining
+requires that separate flow. No Firebase configuration or rules are changed.
