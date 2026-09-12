@@ -205,6 +205,65 @@ void main() {
     );
   }
 
+  testWidgets('app lifecycle changes do not remove the player', (tester) async {
+    final service = LobbyReader('guest');
+    addTearDown(service.players.close);
+    addTearDown(service.games.close);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: GameLobbyPage(game: game, gameService: service),
+      ),
+    );
+    service.players.add([host, guest]);
+    await tester.pumpAndSettle();
+
+    for (final state in [
+      AppLifecycleState.inactive,
+      AppLifecycleState.hidden,
+      AppLifecycleState.paused,
+      AppLifecycleState.hidden,
+      AppLifecycleState.inactive,
+      AppLifecycleState.resumed,
+    ]) {
+      tester.binding.handleAppLifecycleStateChanged(state);
+      await tester.pump();
+    }
+
+    expect(service.leaves, 0);
+    expect(find.byType(GameLobbyPage), findsOneWidget);
+  });
+
+  testWidgets('a membership mismatch keeps the lobby open and explains why', (
+    tester,
+  ) async {
+    final service = LobbyReader('changed-user')
+      ..pendingLeave = Completer<void>();
+    addTearDown(service.players.close);
+    addTearDown(service.games.close);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: GameLobbyPage(game: game, gameService: service),
+      ),
+    );
+    service.players.add([host, guest]);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('game-lobby-back-button')));
+    service.pendingLeave!.completeError(
+      const GameServiceException(
+        GameServiceErrorCode.membershipMismatch,
+        'Your player session no longer matches this game.',
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byType(GameLobbyPage), findsOneWidget);
+    expect(
+      find.text('Your player session no longer matches this game.'),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('player stream errors can be retried', (tester) async {
     final service = LobbyReader('guest');
     addTearDown(service.players.close);

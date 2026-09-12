@@ -1,0 +1,124 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    match /games/{gameId} {
+      function playerPath(uid) {
+        return /databases/$(database)/documents/games/$(gameId)/players/$(uid);
+      }
+
+      function hasValidGameFields() {
+        return request.resource.data.keys().hasAll([
+          "code", "status", "hostUid", "playerOrder", "currentRound",
+          "totalRounds", "createdAt", "updatedAt"
+        ]) && request.resource.data.keys().hasOnly([
+          "code", "status", "hostUid", "playerOrder", "currentRound",
+          "totalRounds", "createdAt", "updatedAt"
+        ]);
+      }
+
+      function isJoining() {
+        let uid = request.auth.uid;
+        let previousOrder = resource.data.playerOrder;
+        let newOrder = request.resource.data.playerOrder;
+        return resource.data.status == "lobby"
+          && request.resource.data.diff(resource.data).affectedKeys()
+              .hasOnly(["playerOrder", "updatedAt"])
+          && request.resource.data.updatedAt == request.time
+          && ((uid in previousOrder && newOrder == previousOrder)
+            || (!(uid in previousOrder)
+              && newOrder == previousOrder.concat([uid])))
+          && getAfter(playerPath(uid)).data.ownerUid == uid;
+      }
+
+      function isLeaving() {
+        let uid = request.auth.uid;
+        let remainingPlayers = resource.data.playerOrder.removeAll([uid]);
+        return uid in resource.data.playerOrder
+          && exists(playerPath(uid))
+          && !existsAfter(playerPath(uid))
+          && request.resource.data.playerOrder == remainingPlayers
+          && request.resource.data.updatedAt == request.time
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            "playerOrder", "updatedAt", "hostUid", "status"
+          ])
+          && ((remainingPlayers.size() == 0
+              && request.resource.data.status == "cancelled"
+              && request.resource.data.hostUid == resource.data.hostUid)
+            || (remainingPlayers.size() > 0
+              && request.resource.data.status == resource.data.status
+              && request.resource.data.hostUid == remainingPlayers[0]));
+      }
+
+      function isStarting() {
+        return resource.data.hostUid == request.auth.uid
+          && resource.data.status == "lobby"
+          && request.resource.data.status == "in_progress"
+          && request.resource.data.hostUid == resource.data.hostUid
+          && request.resource.data.playerOrder == resource.data.playerOrder
+          && request.resource.data.updatedAt == request.time
+          && request.resource.data.diff(resource.data).affectedKeys()
+              .hasOnly(["status", "updatedAt"]);
+      }
+
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated()
+        && hasValidGameFields()
+        && request.resource.data.hostUid == request.auth.uid
+        && request.resource.data.status == "lobby"
+        && request.resource.data.playerOrder == [request.auth.uid]
+        && request.resource.data.currentRound == 0
+        && request.resource.data.totalRounds > 0
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time;
+      allow update: if isAuthenticated()
+        && (isJoining() || isLeaving() || isStarting());
+      allow delete: if false;
+
+      match /players/{playerId} {
+        function gameAfter() {
+          return getAfter(
+            /databases/$(database)/documents/games/$(gameId)
+          ).data;
+        }
+
+        function ownsPlayer() {
+          return isAuthenticated() && playerId == request.auth.uid;
+        }
+
+        function hasValidPlayerFields() {
+          return request.resource.data.keys().hasAll([
+            "ownerUid", "nickname", "avatarId", "score"
+          ]) && request.resource.data.keys().hasOnly([
+            "ownerUid", "nickname", "avatarId", "score"
+          ]);
+        }
+
+        allow read: if isAuthenticated();
+        allow create: if ownsPlayer()
+          && hasValidPlayerFields()
+          && request.resource.data.ownerUid == request.auth.uid
+          && request.resource.data.score == 0
+          && gameAfter().status == "lobby"
+          && playerId in gameAfter().playerOrder;
+        allow update: if ownsPlayer()
+          && resource.data.ownerUid == request.auth.uid
+          && request.resource.data.ownerUid == resource.data.ownerUid
+          && request.resource.data.score == resource.data.score
+          && request.resource.data.diff(resource.data).affectedKeys()
+              .hasOnly(["nickname", "avatarId"])
+          && gameAfter().status == "lobby"
+          && playerId in gameAfter().playerOrder;
+        allow delete: if ownsPlayer()
+          && resource.data.ownerUid == request.auth.uid
+          && !(playerId in gameAfter().playerOrder)
+          && (gameAfter().hostUid != playerId
+            || gameAfter().playerOrder.size() == 0);
+      }
+    }
+  }
+}
