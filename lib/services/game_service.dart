@@ -8,6 +8,7 @@ enum GameServiceErrorCode {
   invalidArgument,
   gameNotFound,
   gameUnavailable,
+  membershipMismatch,
   joinCodeUnavailable,
   notHost,
   invalidState,
@@ -367,30 +368,36 @@ class GameService implements GameClient {
     final game = _games.doc(gameId);
     await _firestore.runTransaction((transaction) async {
       final storedGame = Game.fromSnapshot(await transaction.get(game));
-      _requireLobby(storedGame);
       final playerOrder = _playerOrder(storedGame);
-      if (!playerOrder.contains(user.uid)) return;
+      if (!playerOrder.contains(user.uid)) {
+        throw const GameServiceException(
+          GameServiceErrorCode.membershipMismatch,
+          'Your player session no longer matches this game. Rejoin the game '
+          'before trying to leave again.',
+        );
+      }
+      final player = game.collection(playersCollection).doc(user.uid);
+      final playerSnapshot = await transaction.get(player);
+      if (!playerSnapshot.exists ||
+          playerSnapshot.data()?[ownerUidField] != user.uid) {
+        throw const GameServiceException(
+          GameServiceErrorCode.membershipMismatch,
+          'Your player membership is inconsistent. Please rejoin the game '
+          'and try again.',
+        );
+      }
       final remaining = playerOrder.where((uid) => uid != user.uid).toList();
-      transaction.delete(game.collection(playersCollection).doc(user.uid));
+      transaction.delete(player);
       transaction.update(game, {
         playerOrderField: remaining,
         hostUidField: remaining.isEmpty ? storedGame.hostUid : remaining.first,
         statusField: remaining.isEmpty
             ? GameStatus.cancelled.value
-            : GameStatus.lobby.value,
+            : storedGame.status.value,
         updatedAtField: FieldValue.serverTimestamp(),
       });
     });
   });
-
-  static void _requireLobby(Game game) {
-    if (game.status != GameStatus.lobby) {
-      throw const GameServiceException(
-        GameServiceErrorCode.invalidState,
-        'Players can only join or leave a game in the lobby.',
-      );
-    }
-  }
 
   static List<String> _playerOrder(Game game) {
     final order = game.data[playerOrderField];
