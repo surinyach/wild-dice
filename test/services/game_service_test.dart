@@ -1,5 +1,6 @@
 import 'package:challenge_app/services/firebase_auth_service.dart';
 import 'package:challenge_app/services/game_service.dart';
+import 'package:challenge_app/features/challenges/domain/challenge.dart';
 import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:firebase_auth_mocks/firebase_auth_mocks.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -34,8 +35,11 @@ void main() {
       expect(game.code, 'A7K92');
       expect(game.status, GameStatus.lobby);
       expect(game.hostUid, uid);
-      expect(game.currentRound, 0);
+      expect(game.currentRound, 1);
       expect(game.totalRounds, 5);
+      expect(game.selectedChallengeType, isNull);
+      expect(game.selectedPlayerUids, isEmpty);
+      expect(game.selectedChallengeId, isNull);
 
       final gameData =
           (await firestore
@@ -50,12 +54,19 @@ void main() {
         GameService.playerOrderField,
         GameService.currentRoundField,
         GameService.totalRoundsField,
+        GameService.selectedChallengeTypeField,
+        GameService.selectedPlayerUidsField,
+        GameService.selectedChallengeIdField,
         GameService.createdAtField,
         GameService.updatedAtField,
       });
       expect(gameData[GameService.statusField], 'lobby');
       expect(gameData[GameService.hostUidField], uid);
       expect(gameData[GameService.playerOrderField], [uid]);
+      expect(gameData[GameService.currentRoundField], 1);
+      expect(gameData[GameService.selectedChallengeTypeField], isNull);
+      expect(gameData[GameService.selectedPlayerUidsField], isEmpty);
+      expect(gameData[GameService.selectedChallengeIdField], isNull);
 
       final hostData =
           (await firestore
@@ -70,6 +81,7 @@ void main() {
         GameService.nicknameField: 'Santi',
         GameService.avatarIdField: 'avatar_01',
         GameService.scoreField: 0,
+        GameService.numberField: 1,
       });
     });
 
@@ -116,7 +128,7 @@ void main() {
         final started = (await reference.get()).data();
         await service.startGame(game.id);
         expect((await reference.get()).data(), started);
-        expect(started?['currentRound'], 0);
+        expect(started?['currentRound'], 1);
       },
     );
 
@@ -245,6 +257,7 @@ void main() {
         GameService.nicknameField: 'Player',
         GameService.avatarIdField: 'avatar_02',
         GameService.scoreField: 0,
+        GameService.numberField: 2,
       });
       await secondService.joinGame(
         game.id,
@@ -333,6 +346,7 @@ void main() {
       expect(players.single.nickname, 'Host');
       expect(players.single.avatarId, 'avatar_01');
       expect(players.single.score, 0);
+      expect(players.single.number, 1);
 
       await firestore
           .collection(GameService.gamesCollection)
@@ -344,6 +358,7 @@ void main() {
             GameService.nicknameField: 'Guest',
             GameService.avatarIdField: 'avatar_02',
             GameService.scoreField: 3,
+            GameService.numberField: 2,
           });
 
       players = await service.watchPlayers(game.id).first;
@@ -361,6 +376,57 @@ void main() {
           .doc(game.id)
           .update({GameService.statusField: 'waiting'});
 
+      expect(
+        service.watchGame(game.id),
+        emitsError(_serviceError(GameServiceErrorCode.firestore)),
+      );
+    });
+  });
+
+  group('round state mapping', () {
+    test('deserializes an ordered valid selection', () async {
+      final game = await service.createGame(nickname: 'Host', avatarId: 'a');
+      await firestore.collection('games').doc(game.id).update({
+        GameService.selectedChallengeTypeField: 'pvp',
+        GameService.selectedPlayerUidsField: ['second', uid],
+        GameService.selectedChallengeIdField: 'challenge-7',
+      });
+
+      final mapped = await service.watchGame(game.id).first;
+      expect(mapped?.selectedChallengeType, ChallengeType.pvp);
+      expect(mapped?.selectedPlayerUids, ['second', uid]);
+      expect(mapped?.selectedChallengeId, 'challenge-7');
+    });
+
+    test('reads legacy documents with absent selection fields', () async {
+      final reference = firestore.collection('games').doc('legacy');
+      await reference.set({
+        GameService.codeField: 'OLD12',
+        GameService.statusField: GameStatus.lobby.value,
+        GameService.hostUidField: uid,
+        GameService.playerOrderField: [uid],
+        GameService.currentRoundField: 1,
+        GameService.totalRoundsField: 5,
+      });
+
+      final mapped = Game.fromSnapshot(await reference.get());
+      expect(mapped.selectedChallengeType, isNull);
+      expect(mapped.selectedPlayerUids, isEmpty);
+      expect(mapped.selectedChallengeId, isNull);
+    });
+
+    test('rejects unsupported types and invalid player selections', () async {
+      final game = await service.createGame(nickname: 'Host', avatarId: 'a');
+      final reference = firestore.collection('games').doc(game.id);
+      await reference.update({GameService.selectedChallengeTypeField: 'team'});
+      expect(
+        service.watchGame(game.id),
+        emitsError(_serviceError(GameServiceErrorCode.firestore)),
+      );
+      await reference.update({
+        GameService.selectedChallengeTypeField: 'pvp',
+        GameService.selectedPlayerUidsField: [uid, uid],
+      });
       expect(
         service.watchGame(game.id),
         emitsError(_serviceError(GameServiceErrorCode.firestore)),

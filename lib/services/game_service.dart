@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../features/challenges/domain/challenge.dart';
 import 'firebase_auth_service.dart';
 
 enum GameServiceErrorCode {
@@ -52,6 +53,9 @@ class Game {
     required this.hostUid,
     required this.currentRound,
     required this.totalRounds,
+    this.selectedChallengeType,
+    this.selectedPlayerUids = const [],
+    this.selectedChallengeId,
     required this.data,
   });
   factory Game.fromSnapshot(DocumentSnapshot<Map<String, dynamic>> snapshot) {
@@ -66,15 +70,40 @@ class Game {
     final hostUid = data[GameService.hostUidField];
     final currentRound = data[GameService.currentRoundField];
     final totalRounds = data[GameService.totalRoundsField];
+    final selectedChallengeTypeValue =
+        data[GameService.selectedChallengeTypeField];
+    final selectedPlayerUidsValue =
+        data[GameService.selectedPlayerUidsField] ?? const <String>[];
+    final selectedChallengeId = data[GameService.selectedChallengeIdField];
     if (code is! String ||
         hostUid is! String ||
         currentRound is! int ||
-        totalRounds is! int) {
+        totalRounds is! int ||
+        (selectedChallengeTypeValue != null &&
+            selectedChallengeTypeValue is! String) ||
+        selectedPlayerUidsValue is! List ||
+        selectedPlayerUidsValue.any((uid) => uid is! String) ||
+        (selectedChallengeId != null && selectedChallengeId is! String)) {
       throw const GameServiceException(
         GameServiceErrorCode.firestore,
         'Invalid game document.',
       );
     }
+    ChallengeType? selectedChallengeType;
+    if (selectedChallengeTypeValue != null) {
+      try {
+        selectedChallengeType = ChallengeType.fromJson(
+          selectedChallengeTypeValue as String,
+        );
+      } on FormatException {
+        throw const GameServiceException(
+          GameServiceErrorCode.firestore,
+          'The game document contains an unsupported challenge type.',
+        );
+      }
+    }
+    final selectedPlayerUids = selectedPlayerUidsValue.cast<String>();
+    _validateSelection(selectedChallengeType, selectedPlayerUids);
     return Game(
       id: snapshot.id,
       code: code,
@@ -82,6 +111,9 @@ class Game {
       hostUid: hostUid,
       currentRound: currentRound,
       totalRounds: totalRounds,
+      selectedChallengeType: selectedChallengeType,
+      selectedPlayerUids: List.unmodifiable(selectedPlayerUids),
+      selectedChallengeId: selectedChallengeId as String?,
       data: Map.unmodifiable(data),
     );
   }
@@ -91,7 +123,30 @@ class Game {
   final String hostUid;
   final int currentRound;
   final int totalRounds;
+  final ChallengeType? selectedChallengeType;
+  final List<String> selectedPlayerUids;
+  final String? selectedChallengeId;
   final Map<String, dynamic> data;
+
+  static void _validateSelection(
+    ChallengeType? type,
+    List<String> selectedPlayerUids,
+  ) {
+    final validCount = switch (type) {
+      null => selectedPlayerUids.isEmpty,
+      ChallengeType.normal || ChallengeType.wild =>
+        selectedPlayerUids.length == 1,
+      ChallengeType.pvp =>
+        selectedPlayerUids.length == 2 &&
+            selectedPlayerUids[0] != selectedPlayerUids[1],
+    };
+    if (!validCount) {
+      throw const GameServiceException(
+        GameServiceErrorCode.firestore,
+        'The game document contains an invalid player selection.',
+      );
+    }
+  }
 }
 
 class GamePlayer {
@@ -101,6 +156,7 @@ class GamePlayer {
     required this.nickname,
     required this.avatarId,
     required this.score,
+    this.number = 0,
     required this.data,
   });
   factory GamePlayer.fromSnapshot(
@@ -111,10 +167,12 @@ class GamePlayer {
     final nickname = data[GameService.nicknameField];
     final avatarId = data[GameService.avatarIdField];
     final score = data[GameService.scoreField];
+    final number = data[GameService.numberField] ?? 0;
     if (ownerUid is! String ||
         nickname is! String ||
         avatarId is! String ||
-        score is! int) {
+        score is! int ||
+        number is! int) {
       throw const GameServiceException(
         GameServiceErrorCode.firestore,
         'Invalid player document.',
@@ -126,6 +184,7 @@ class GamePlayer {
       nickname: nickname,
       avatarId: avatarId,
       score: score,
+      number: number,
       data: Map.unmodifiable(data),
     );
   }
@@ -134,6 +193,8 @@ class GamePlayer {
   final String nickname;
   final String avatarId;
   final int score;
+  /// The stable, game-specific player number. Zero denotes a legacy document.
+  final int number;
   final Map<String, dynamic> data;
 }
 
@@ -186,10 +247,14 @@ class GameService implements GameClient {
   static const playerOrderField = 'playerOrder';
   static const currentRoundField = 'currentRound';
   static const totalRoundsField = 'totalRounds';
+  static const selectedChallengeTypeField = 'selectedChallengeType';
+  static const selectedPlayerUidsField = 'selectedPlayerUids';
+  static const selectedChallengeIdField = 'selectedChallengeId';
   static const ownerUidField = 'ownerUid';
   static const nicknameField = 'nickname';
   static const avatarIdField = 'avatarId';
   static const scoreField = 'score';
+  static const numberField = 'number';
   static const createdAtField = 'createdAt';
   static const updatedAtField = 'updatedAt';
   static const _characters = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -232,8 +297,11 @@ class GameService implements GameClient {
       statusField: GameStatus.lobby.value,
       hostUidField: owner.uid,
       playerOrderField: [owner.uid],
-      currentRoundField: 0,
+      currentRoundField: 1,
       totalRoundsField: totalRounds,
+      selectedChallengeTypeField: null,
+      selectedPlayerUidsField: <String>[],
+      selectedChallengeIdField: null,
       createdAtField: FieldValue.serverTimestamp(),
       updatedAtField: FieldValue.serverTimestamp(),
     });
@@ -242,6 +310,7 @@ class GameService implements GameClient {
       nicknameField: nickname.trim(),
       avatarIdField: avatarId.trim(),
       scoreField: 0,
+      numberField: 1,
     });
     await batch.commit();
     return Game.fromSnapshot(await game.get());
@@ -284,6 +353,18 @@ class GameService implements GameClient {
       }
       final playerOrder = _playerOrder(storedGame);
       final playerSnapshot = await transaction.get(player);
+      var playerNumber = playerSnapshot.data()?[numberField];
+      if (playerNumber is! int) {
+        var highestNumber = 0;
+        for (final uid in playerOrder) {
+          final existing = await transaction.get(
+            game.collection(playersCollection).doc(uid),
+          );
+          final number = existing.data()?[numberField];
+          if (number is int && number > highestNumber) highestNumber = number;
+        }
+        playerNumber = highestNumber + 1;
+      }
       transaction.set(player, {
         ownerUidField: user.uid,
         nicknameField: nickname.trim(),
@@ -291,6 +372,7 @@ class GameService implements GameClient {
         scoreField: playerSnapshot.data()?[scoreField] is int
             ? playerSnapshot.data()![scoreField]
             : 0,
+        numberField: playerNumber,
       }, SetOptions(merge: true));
       transaction.update(game, {
         playerOrderField: playerOrder.contains(user.uid)
