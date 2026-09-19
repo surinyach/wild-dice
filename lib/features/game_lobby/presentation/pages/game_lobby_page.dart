@@ -56,12 +56,13 @@ class _GameLobbyPageState extends State<GameLobbyPage> {
                       name: '/gameplay',
                       arguments: updated,
                     ),
-                    builder: (_) => const FutureFeaturePage(
+                    builder: (_) => FutureFeaturePage(
                       title: 'Gameplay',
                       message: 'Gameplay is coming soon.',
                       details: 'Your game has started.',
                       icon: Icons.sports_esports_rounded,
                       accentColor: Color(0xFF8BCB2A),
+                      onBack: () => widget.gameService.leaveGame(updated!.id),
                     ),
                   ),
                 );
@@ -103,7 +104,9 @@ class _GameLobbyPageState extends State<GameLobbyPage> {
     }
   }
 
-  Future<void> _leave() async {
+  // Membership is removed only from an explicit navigation action. App
+  // lifecycle changes (for example, opening another app) must not call this.
+  Future<void> _leaveGameAndPop() async {
     if (_leaving || _left) return;
     setState(() => _leaving = true);
     try {
@@ -118,8 +121,7 @@ class _GameLobbyPageState extends State<GameLobbyPage> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            error is GameServiceException &&
-                    error.code == GameServiceErrorCode.gameUnavailable
+            error is GameServiceException
                 ? error.message
                 : 'Could not leave the game. Please try again.',
           ),
@@ -160,7 +162,7 @@ class _GameLobbyPageState extends State<GameLobbyPage> {
     return PopScope<void>(
       canPop: _left,
       onPopInvokedWithResult: (didPop, result) {
-        if (!didPop) _leave();
+        if (!didPop) _leaveGameAndPop();
       },
       child: Scaffold(
         backgroundColor: const Color(0xFF1F5235),
@@ -177,7 +179,9 @@ class _GameLobbyPageState extends State<GameLobbyPage> {
             alignment: Alignment.topLeft,
             child: Padding(
               padding: const EdgeInsets.only(left: 12, top: 12),
-              child: _MainMenuBackButton(onPressed: _leaving ? null : _leave),
+              child: _MainMenuBackButton(
+                onPressed: _leaving ? null : _leaveGameAndPop,
+              ),
             ),
           ),
         ),

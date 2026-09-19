@@ -459,11 +459,87 @@ void main() {
         isNotNull,
       );
     });
+
+    test(
+      'does not report success for a different authenticated user',
+      () async {
+        final game = await service.createGame(
+          nickname: 'Host',
+          avatarId: 'avatar_01',
+        );
+        final differentUser = GameService(
+          firestore: firestore,
+          authService: FirebaseAuthService(
+            auth: MockFirebaseAuth(
+              mockUser: MockUser(uid: 'different-user', isAnonymous: true),
+              signedIn: true,
+            ),
+          ),
+        );
+
+        await expectLater(
+          differentUser.leaveGame(game.id),
+          throwsA(_serviceError(GameServiceErrorCode.membershipMismatch)),
+        );
+        expect(await service.watchPlayers(game.id).first, hasLength(1));
+      },
+    );
+
+    test('rejects an inconsistent missing player document', () async {
+      final game = await service.createGame(
+        nickname: 'Host',
+        avatarId: 'avatar_01',
+      );
+      await firestore
+          .collection(GameService.gamesCollection)
+          .doc(game.id)
+          .collection(GameService.playersCollection)
+          .doc(uid)
+          .delete();
+
+      await expectLater(
+        service.leaveGame(game.id),
+        throwsA(_serviceError(GameServiceErrorCode.membershipMismatch)),
+      );
+    });
+
+    for (final status in [
+      GameStatus.lobby,
+      GameStatus.inProgress,
+      GameStatus.finished,
+      GameStatus.cancelled,
+    ]) {
+      test('removes a player while preserving ${status.value}', () async {
+        final game = await service.createGame(nickname: 'Host', avatarId: 'a');
+        final guest = GameService(
+          firestore: firestore,
+          authService: FirebaseAuthService(
+            auth: MockFirebaseAuth(
+              mockUser: MockUser(uid: 'guest', isAnonymous: true),
+              signedIn: true,
+            ),
+          ),
+        );
+        await guest.joinGame(game.id, nickname: 'Guest', avatarId: 'b');
+        await firestore.collection('games').doc(game.id).update({
+          GameService.statusField: status.value,
+        });
+
+        await guest.leaveGame(game.id);
+
+        final updated = Game.fromSnapshot(
+          await firestore.collection('games').doc(game.id).get(),
+        );
+        expect(updated.status, status);
+        expect(updated.data[GameService.playerOrderField], [uid]);
+        expect(await service.watchPlayers(game.id).first, hasLength(1));
+      });
+    }
   });
 
   group('validation', () {
     test(
-      'joining and leaving a started game do not change membership',
+      'joining a started game is rejected but its player can leave',
       () async {
         final game = await service.createGame(nickname: 'Host', avatarId: 'a');
         await service.startGame(game.id);
@@ -471,18 +547,11 @@ void main() {
           service.joinGame(game.id, nickname: 'Host', avatarId: 'b'),
           throwsA(_serviceError(GameServiceErrorCode.gameUnavailable)),
         );
-        await expectLater(
-          service.leaveGame(game.id),
-          throwsA(_serviceError(GameServiceErrorCode.invalidState)),
-        );
+        await service.leaveGame(game.id);
+        expect(await service.watchPlayers(game.id).first, isEmpty);
         expect(
-          (await service.watchPlayers(game.id).first).single.avatarId,
-          'a',
-        );
-        expect(
-          (await service.watchGame(game.id).first)?.data[GameService
-              .playerOrderField],
-          [uid],
+          (await service.watchGame(game.id).first)?.status,
+          GameStatus.cancelled,
         );
       },
     );

@@ -23,9 +23,12 @@ class Session implements GameSession {
   final updates = StreamController<Game?>.broadcast();
   Completer<void> start = Completer<void>();
   int calls = 0;
+  int leaves = 0;
 
   @override
-  Future<void> leaveGame(String gameId) async {}
+  Future<void> leaveGame(String gameId) async {
+    leaves++;
+  }
 
   @override
   Stream<List<GamePlayer>> watchPlayers(String gameId) =>
@@ -87,6 +90,20 @@ void main() {
       expect(session.updates.hasListener, isFalse);
     });
   }
+
+  testWidgets('leaving after the game starts removes the player', (
+    tester,
+  ) async {
+    final session = Session('guest');
+    await open(tester, session);
+    session.updates.add(game(GameStatus.inProgress));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Back to main menu'));
+    await tester.pumpAndSettle();
+
+    expect(session.leaves, 1);
+  });
 
   testWidgets(
     'blocks duplicate taps, reports failure, retries and awaits stream',
