@@ -51,7 +51,7 @@ void main() {
         GameService.codeField,
         GameService.statusField,
         GameService.hostUidField,
-        GameService.playerOrderField,
+        GameService.playerCountField,
         GameService.currentRoundField,
         GameService.totalRoundsField,
         GameService.selectedChallengeTypeField,
@@ -62,7 +62,7 @@ void main() {
       });
       expect(gameData[GameService.statusField], 'lobby');
       expect(gameData[GameService.hostUidField], uid);
-      expect(gameData[GameService.playerOrderField], [uid]);
+      expect(gameData[GameService.playerCountField], 1);
       expect(gameData[GameService.currentRoundField], 1);
       expect(gameData[GameService.selectedChallengeTypeField], isNull);
       expect(gameData[GameService.selectedPlayerUidsField], isEmpty);
@@ -266,8 +266,8 @@ void main() {
       );
       expect(
         (await service.watchGame(game.id).first)?.data[GameService
-            .playerOrderField],
-        [uid, secondUid],
+            .playerCountField],
+        2,
       );
     });
 
@@ -404,7 +404,7 @@ void main() {
         GameService.codeField: 'OLD12',
         GameService.statusField: GameStatus.lobby.value,
         GameService.hostUidField: uid,
-        GameService.playerOrderField: [uid],
+        GameService.playerCountField: 1,
         GameService.currentRoundField: 1,
         GameService.totalRoundsField: 5,
       });
@@ -451,7 +451,7 @@ void main() {
 
       expect((await playerDocument.get()).exists, isFalse);
       final remainingGame = (await gameDocument.get()).data()!;
-      expect(remainingGame[GameService.playerOrderField], isEmpty);
+      expect(remainingGame[GameService.playerCountField], 0);
       expect(remainingGame[GameService.statusField], 'cancelled');
       expect(remainingGame[GameService.hostUidField], uid);
       expect(
@@ -531,7 +531,7 @@ void main() {
           await firestore.collection('games').doc(game.id).get(),
         );
         expect(updated.status, status);
-        expect(updated.data[GameService.playerOrderField], [uid]);
+        expect(updated.data[GameService.playerCountField], 1);
         expect(await service.watchPlayers(game.id).first, hasLength(1));
       });
     }
@@ -574,15 +574,23 @@ void main() {
         final reference = firestore.collection('games').doc(game.id);
         var updated = Game.fromSnapshot(await reference.get());
         expect(updated.hostUid, uid);
-        expect(updated.data[GameService.playerOrderField], [uid, 'second']);
+        expect(updated.data[GameService.playerCountField], 2);
         await service.leaveGame(game.id);
         updated = Game.fromSnapshot(await reference.get());
         expect(updated.hostUid, 'second');
         expect(updated.status, GameStatus.lobby);
-        expect(updated.data[GameService.playerOrderField], ['second']);
+        expect(updated.data[GameService.playerCountField], 1);
+        final remainingPlayer =
+            (await second.watchPlayers(game.id).first).single;
+        expect(remainingPlayer.ownerUid, 'second');
+        expect(remainingPlayer.number, 1);
         expect(
-          (await second.watchPlayers(game.id).first).single.ownerUid,
-          'second',
+          (await reference
+                  .collection(GameService.playersCollection)
+                  .doc('second')
+                  .get())
+              .data()?[GameService.numberField],
+          1,
         );
         await second.startGame(game.id);
         expect(

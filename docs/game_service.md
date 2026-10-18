@@ -17,7 +17,7 @@ games/{gameId}
   code: string
   status: lobby | in_progress | finished | cancelled
   hostUid: string
-  playerOrder: list of Firebase UIDs in join order
+  playerCount: number of active player documents
   currentRound: integer
   totalRounds: integer
   createdAt: server timestamp
@@ -112,8 +112,9 @@ await service.joinGame(
 The service validates the ID, ensures authentication, and starts a transaction.
 It reads the game and player, produces `gameNotFound` when the game is absent,
 requires lobby status, then merges a player document identified by the current
-UID. New players start with `score: 0`; existing scores survive a repeated join. The transaction also
-appends the UID to `playerOrder` only if absent and updates `updatedAt`.
+UID. New players start with `score: 0` and receive the next one-based `number`;
+existing scores and numbers survive a repeated join. The transaction also
+increments `playerCount` for a new player and updates `updatedAt`.
 
 ## Listening to Game Changes
 
@@ -164,10 +165,11 @@ Each player provides:
 await service.leaveGame(game.id);
 ```
 
-The service uses a transaction to require lobby status, remove the current UID
-from `playerOrder`, delete their player document, and update `updatedAt`.
-The first remaining player becomes host. If no players remain, the game becomes
-`cancelled` and retains the previous host UID, matching the Firebase rules.
+The service deletes the current player's document and updates `updatedAt` in a
+transaction. Remaining players are renumbered contiguously from `1`; the player
+with number `1` becomes host. `playerCount` is reduced accordingly. If no
+players remain, the game becomes `cancelled` and retains the previous host UID,
+matching the Firebase rules.
 
 ## Returned Models
 

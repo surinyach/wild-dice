@@ -36,6 +36,7 @@ class FakeGames implements GameClient {
       nickname: 'Host',
       avatarId: 'avatar_01',
       score: 0,
+      number: 1,
       data: {},
     ),
     GamePlayer(
@@ -44,6 +45,7 @@ class FakeGames implements GameClient {
       nickname: nickname ?? 'Guest',
       avatarId: avatarId ?? 'avatar_02',
       score: 0,
+      number: 2,
       data: const {},
     ),
   ]);

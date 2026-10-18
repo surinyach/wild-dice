@@ -26,6 +26,10 @@ class GameServiceException implements Exception {
   String toString() => 'GameServiceException($code): $message';
 }
 
+class _MembershipChanged implements Exception {
+  const _MembershipChanged();
+}
+
 enum GameStatus {
   lobby('lobby'),
   inProgress('in_progress'),
@@ -135,8 +139,8 @@ class Game {
   ) {
     final validCount = switch (type) {
       null => selectedPlayerUids.isEmpty,
-      ChallengeType.normal || ChallengeType.wild =>
-        selectedPlayerUids.length == 1,
+      ChallengeType.normal ||
+      ChallengeType.wild => selectedPlayerUids.length == 1,
       ChallengeType.pvp =>
         selectedPlayerUids.length == 2 &&
             selectedPlayerUids[0] != selectedPlayerUids[1],
@@ -157,7 +161,7 @@ class GamePlayer {
     required this.nickname,
     required this.avatarId,
     required this.score,
-    this.number = 0,
+    required this.number,
     required this.data,
   });
   factory GamePlayer.fromSnapshot(
@@ -168,12 +172,13 @@ class GamePlayer {
     final nickname = data[GameService.nicknameField];
     final avatarId = data[GameService.avatarIdField];
     final score = data[GameService.scoreField];
-    final number = data[GameService.numberField] ?? 0;
+    final number = data[GameService.numberField];
     if (ownerUid is! String ||
         nickname is! String ||
         avatarId is! String ||
         score is! int ||
-        number is! int) {
+        number is! int ||
+        number < 1) {
       throw const GameServiceException(
         GameServiceErrorCode.firestore,
         'Invalid player document.',
@@ -194,7 +199,8 @@ class GamePlayer {
   final String nickname;
   final String avatarId;
   final int score;
-  /// The stable, game-specific player number. Zero denotes a legacy document.
+
+  /// The current, one-based position of this player in the game.
   final int number;
   final Map<String, dynamic> data;
 }
@@ -245,7 +251,7 @@ class GameService implements GameClient {
   static const codeField = 'code';
   static const statusField = 'status';
   static const hostUidField = 'hostUid';
-  static const playerOrderField = 'playerOrder';
+  static const playerCountField = 'playerCount';
   static const currentRoundField = 'currentRound';
   static const totalRoundsField = 'totalRounds';
   static const selectedChallengeTypeField = 'selectedChallengeType';
@@ -297,7 +303,7 @@ class GameService implements GameClient {
       codeField: normalizedCode,
       statusField: GameStatus.lobby.value,
       hostUidField: owner.uid,
-      playerOrderField: [owner.uid],
+      playerCountField: 1,
       currentRoundField: 1,
       totalRoundsField: totalRounds,
       selectedChallengeTypeField: null,
@@ -352,20 +358,11 @@ class GameService implements GameClient {
           'This game is no longer available to join.',
         );
       }
-      final playerOrder = _playerOrder(storedGame);
       final playerSnapshot = await transaction.get(player);
-      var playerNumber = playerSnapshot.data()?[numberField];
-      if (playerNumber is! int) {
-        var highestNumber = 0;
-        for (final uid in playerOrder) {
-          final existing = await transaction.get(
-            game.collection(playersCollection).doc(uid),
-          );
-          final number = existing.data()?[numberField];
-          if (number is int && number > highestNumber) highestNumber = number;
-        }
-        playerNumber = highestNumber + 1;
-      }
+      final existingNumber = playerSnapshot.data()?[numberField];
+      final isExistingPlayer = existingNumber is int && existingNumber >= 1;
+      final playerCount = _playerCount(storedGame);
+      final playerNumber = isExistingPlayer ? existingNumber : playerCount + 1;
       transaction.set(player, {
         ownerUidField: user.uid,
         nicknameField: nickname.trim(),
@@ -376,9 +373,7 @@ class GameService implements GameClient {
         numberField: playerNumber,
       }, SetOptions(merge: true));
       transaction.update(game, {
-        playerOrderField: playerOrder.contains(user.uid)
-            ? playerOrder
-            : [...playerOrder, user.uid],
+        if (!isExistingPlayer) playerCountField: playerNumber,
         updatedAtField: FieldValue.serverTimestamp(),
       });
     });
@@ -433,7 +428,7 @@ class GameService implements GameClient {
         _games
             .doc(gameId)
             .collection(playersCollection)
-            .orderBy(FieldPath.documentId)
+            .orderBy(numberField)
             .snapshots(),
         (snapshot) =>
             List.unmodifiable(snapshot.docs.map(GamePlayer.fromSnapshot)),
@@ -448,48 +443,80 @@ class GameService implements GameClient {
     _validateId(gameId);
     final user = await _auth.ensureAnonymousUser();
     final game = _games.doc(gameId);
-    await _firestore.runTransaction((transaction) async {
-      final storedGame = Game.fromSnapshot(await transaction.get(game));
-      final playerOrder = _playerOrder(storedGame);
-      if (!playerOrder.contains(user.uid)) {
-        throw const GameServiceException(
-          GameServiceErrorCode.membershipMismatch,
-          'Your player session no longer matches this game. Rejoin the game '
-          'before trying to leave again.',
-        );
-      }
-      final player = game.collection(playersCollection).doc(user.uid);
-      final playerSnapshot = await transaction.get(player);
-      if (!playerSnapshot.exists ||
-          playerSnapshot.data()?[ownerUidField] != user.uid) {
+    for (var attempt = 0; attempt < 3; attempt++) {
+      final players = await game
+          .collection(playersCollection)
+          .orderBy(numberField)
+          .get();
+      if (players.docs.every((player) => player.id != user.uid)) {
         throw const GameServiceException(
           GameServiceErrorCode.membershipMismatch,
           'Your player membership is inconsistent. Please rejoin the game '
           'and try again.',
         );
       }
-      final remaining = playerOrder.where((uid) => uid != user.uid).toList();
-      transaction.delete(player);
-      transaction.update(game, {
-        playerOrderField: remaining,
-        hostUidField: remaining.isEmpty ? storedGame.hostUid : remaining.first,
-        statusField: remaining.isEmpty
-            ? GameStatus.cancelled.value
-            : storedGame.status.value,
-        updatedAtField: FieldValue.serverTimestamp(),
-      });
-    });
+      try {
+        await _firestore.runTransaction((transaction) async {
+          final storedGame = Game.fromSnapshot(await transaction.get(game));
+          final playerSnapshots = <DocumentSnapshot<Map<String, dynamic>>>[];
+          for (final player in players.docs) {
+            playerSnapshots.add(await transaction.get(player.reference));
+          }
+          if (_playerCount(storedGame) != playerSnapshots.length) {
+            throw const _MembershipChanged();
+          }
+          final currentPlayer = playerSnapshots.where(
+            (snapshot) => snapshot.id == user.uid,
+          );
+          if (currentPlayer.isEmpty ||
+              currentPlayer.single.data()?[ownerUidField] != user.uid) {
+            throw const GameServiceException(
+              GameServiceErrorCode.membershipMismatch,
+              'Your player membership is inconsistent. Please rejoin the game '
+              'and try again.',
+            );
+          }
+          final remaining = playerSnapshots
+              .where((snapshot) => snapshot.id != user.uid)
+              .toList();
+          transaction.delete(currentPlayer.single.reference);
+          for (var index = 0; index < remaining.length; index++) {
+            transaction.update(remaining[index].reference, {
+              numberField: index + 1,
+            });
+          }
+          transaction.update(game, {
+            playerCountField: remaining.length,
+            hostUidField: remaining.isEmpty
+                ? storedGame.hostUid
+                : remaining.first.id,
+            statusField: remaining.isEmpty
+                ? GameStatus.cancelled.value
+                : storedGame.status.value,
+            updatedAtField: FieldValue.serverTimestamp(),
+          });
+        });
+        return;
+      } on _MembershipChanged {
+        if (attempt == 2) {
+          throw const GameServiceException(
+            GameServiceErrorCode.firestore,
+            'The player list changed while leaving. Please try again.',
+          );
+        }
+      }
+    }
   });
 
-  static List<String> _playerOrder(Game game) {
-    final order = game.data[playerOrderField];
-    if (order is! List || order.any((uid) => uid is! String)) {
+  static int _playerCount(Game game) {
+    final count = game.data[playerCountField];
+    if (count is! int || count < 0) {
       throw const GameServiceException(
         GameServiceErrorCode.firestore,
-        'The game has no valid player order. Please create a new game.',
+        'The game has no valid player count. Please create a new game.',
       );
     }
-    return order.cast<String>();
+    return count;
   }
 
   Future<String> _availableCode() async {

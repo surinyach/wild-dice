@@ -21,6 +21,7 @@ const host = GamePlayer(
   nickname: 'Host Hero',
   avatarId: 'avatar_01',
   score: 0,
+  number: 1,
   data: {},
 );
 const guest = GamePlayer(
@@ -29,6 +30,7 @@ const guest = GamePlayer(
   nickname: 'Guest Hero',
   avatarId: 'avatar_02',
   score: 0,
+  number: 2,
   data: {},
 );
 
@@ -76,6 +78,7 @@ void main() {
         service.players.add([host]);
         await tester.pumpAndSettle();
         expect(find.text('Host Hero'), findsOneWidget);
+        expect(find.text('1.'), findsOneWidget);
         expect(find.text('Guest Hero'), findsNothing);
 
         service.players.add([host, guest]);
