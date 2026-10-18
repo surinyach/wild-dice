@@ -457,12 +457,28 @@ class _PlayerCard extends StatelessWidget {
               ? const Icon(Icons.person, color: Colors.white)
               : null,
         ),
-        title: Text(
-          player.nickname,
-          style: const TextStyle(
-            color: Colors.white,
-            fontWeight: FontWeight.bold,
-          ),
+        title: Row(
+          children: [
+            Text(
+              '${player.number}.',
+              key: ValueKey('player-number-${player.id}'),
+              style: const TextStyle(
+                color: Color(0xFF8BCB2A),
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                player.nickname,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ],
         ),
         subtitle: Text(
           isHost ? 'HOST' : 'PLAYER',

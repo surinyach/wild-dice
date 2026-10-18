@@ -13,45 +13,49 @@ service cloud.firestore {
 
       function hasValidGameFields() {
         return request.resource.data.keys().hasAll([
-          "code", "status", "hostUid", "playerOrder", "currentRound",
-          "totalRounds", "createdAt", "updatedAt"
+          "code", "status", "hostUid", "playerCount", "currentRound",
+          "totalRounds", "selectedChallengeType", "selectedPlayerUids",
+          "selectedChallengeId", "createdAt", "updatedAt"
         ]) && request.resource.data.keys().hasOnly([
-          "code", "status", "hostUid", "playerOrder", "currentRound",
-          "totalRounds", "createdAt", "updatedAt"
+          "code", "status", "hostUid", "playerCount", "currentRound",
+          "totalRounds", "selectedChallengeType", "selectedPlayerUids",
+          "selectedChallengeId", "createdAt", "updatedAt"
         ]);
       }
 
       function isJoining() {
         let uid = request.auth.uid;
-        let previousOrder = resource.data.playerOrder;
-        let newOrder = request.resource.data.playerOrder;
+        let previousCount = resource.data.playerCount;
+        let newCount = request.resource.data.playerCount;
         return resource.data.status == "lobby"
           && request.resource.data.diff(resource.data).affectedKeys()
-              .hasOnly(["playerOrder", "updatedAt"])
+              .hasOnly(["playerCount", "updatedAt"])
           && request.resource.data.updatedAt == request.time
-          && ((uid in previousOrder && newOrder == previousOrder)
-            || (!(uid in previousOrder)
-              && newOrder == previousOrder.concat([uid])))
-          && getAfter(playerPath(uid)).data.ownerUid == uid;
+          && (newCount == previousCount || newCount == previousCount + 1)
+          && getAfter(playerPath(uid)).data.ownerUid == uid
+          && getAfter(playerPath(uid)).data.number >= 1
+          && getAfter(playerPath(uid)).data.number <= newCount;
       }
 
       function isLeaving() {
         let uid = request.auth.uid;
-        let remainingPlayers = resource.data.playerOrder.removeAll([uid]);
-        return uid in resource.data.playerOrder
-          && exists(playerPath(uid))
+        let remainingCount = resource.data.playerCount - 1;
+        return exists(playerPath(uid))
           && !existsAfter(playerPath(uid))
-          && request.resource.data.playerOrder == remainingPlayers
+          && remainingCount >= 0
+          && request.resource.data.playerCount == remainingCount
           && request.resource.data.updatedAt == request.time
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-            "playerOrder", "updatedAt", "hostUid", "status"
+            "playerCount", "updatedAt", "hostUid", "status"
           ])
-          && ((remainingPlayers.size() == 0
+          && ((remainingCount == 0
               && request.resource.data.status == "cancelled"
               && request.resource.data.hostUid == resource.data.hostUid)
-            || (remainingPlayers.size() > 0
+            || (remainingCount > 0
               && request.resource.data.status == resource.data.status
-              && request.resource.data.hostUid == remainingPlayers[0]));
+              && existsAfter(playerPath(request.resource.data.hostUid))
+              && getAfter(playerPath(request.resource.data.hostUid)).data.number
+                  == 1));
       }
 
       function isStarting() {
@@ -59,7 +63,7 @@ service cloud.firestore {
           && resource.data.status == "lobby"
           && request.resource.data.status == "in_progress"
           && request.resource.data.hostUid == resource.data.hostUid
-          && request.resource.data.playerOrder == resource.data.playerOrder
+          && request.resource.data.playerCount == resource.data.playerCount
           && request.resource.data.updatedAt == request.time
           && request.resource.data.diff(resource.data).affectedKeys()
               .hasOnly(["status", "updatedAt"]);
@@ -70,8 +74,11 @@ service cloud.firestore {
         && hasValidGameFields()
         && request.resource.data.hostUid == request.auth.uid
         && request.resource.data.status == "lobby"
-        && request.resource.data.playerOrder == [request.auth.uid]
-        && request.resource.data.currentRound == 0
+        && request.resource.data.playerCount == 1
+        && getAfter(playerPath(request.auth.uid)).data.ownerUid
+            == request.auth.uid
+        && getAfter(playerPath(request.auth.uid)).data.number == 1
+        && request.resource.data.currentRound == 1
         && request.resource.data.totalRounds > 0
         && request.resource.data.createdAt == request.time
         && request.resource.data.updatedAt == request.time;
@@ -80,6 +87,12 @@ service cloud.firestore {
       allow delete: if false;
 
       match /players/{playerId} {
+        function gameBefore() {
+          return get(
+            /databases/$(database)/documents/games/$(gameId)
+          ).data;
+        }
+
         function gameAfter() {
           return getAfter(
             /databases/$(database)/documents/games/$(gameId)
@@ -92,10 +105,21 @@ service cloud.firestore {
 
         function hasValidPlayerFields() {
           return request.resource.data.keys().hasAll([
-            "ownerUid", "nickname", "avatarId", "score"
+            "ownerUid", "nickname", "avatarId", "score", "number"
           ]) && request.resource.data.keys().hasOnly([
-            "ownerUid", "nickname", "avatarId", "score"
+            "ownerUid", "nickname", "avatarId", "score", "number"
           ]);
+        }
+
+        function isRenumberingAfterDeparture() {
+          return gameAfter().playerCount == gameBefore().playerCount - 1
+            && !existsAfter(playerPath(request.auth.uid))
+            && request.resource.data.ownerUid == resource.data.ownerUid
+            && request.resource.data.diff(resource.data).affectedKeys()
+                .hasOnly(["number"])
+            && request.resource.data.number is int
+            && request.resource.data.number >= 1
+            && request.resource.data.number <= gameAfter().playerCount;
         }
 
         allow read: if isAuthenticated();
@@ -103,21 +127,22 @@ service cloud.firestore {
           && hasValidPlayerFields()
           && request.resource.data.ownerUid == request.auth.uid
           && request.resource.data.score == 0
-          && gameAfter().status == "lobby"
-          && playerId in gameAfter().playerOrder;
-        allow update: if ownsPlayer()
-          && resource.data.ownerUid == request.auth.uid
-          && request.resource.data.ownerUid == resource.data.ownerUid
-          && request.resource.data.score == resource.data.score
-          && request.resource.data.diff(resource.data).affectedKeys()
-              .hasOnly(["nickname", "avatarId"])
-          && gameAfter().status == "lobby"
-          && playerId in gameAfter().playerOrder;
+          && request.resource.data.number is int
+          && request.resource.data.number >= 1
+          && request.resource.data.number <= gameAfter().playerCount
+          && gameAfter().status == "lobby";
+        allow update: if (ownsPlayer()
+            && resource.data.ownerUid == request.auth.uid
+            && request.resource.data.ownerUid == resource.data.ownerUid
+            && request.resource.data.score == resource.data.score
+            && request.resource.data.number == resource.data.number
+            && request.resource.data.diff(resource.data).affectedKeys()
+                .hasOnly(["nickname", "avatarId"])
+            && gameAfter().status == "lobby")
+          || (isAuthenticated() && isRenumberingAfterDeparture());
         allow delete: if ownsPlayer()
           && resource.data.ownerUid == request.auth.uid
-          && !(playerId in gameAfter().playerOrder)
-          && (gameAfter().hostUid != playerId
-            || gameAfter().playerOrder.size() == 0);
+          && gameAfter().playerCount == gameBefore().playerCount - 1;
       }
     }
   }

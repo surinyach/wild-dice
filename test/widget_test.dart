@@ -166,6 +166,7 @@ class _FakeGameSession implements GameSession {
       nickname: nickname ?? 'Host',
       avatarId: avatarId ?? 'avatar_01',
       score: 0,
+      number: 1,
       data: const {},
     ),
   ]);
