@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../features/challenges/domain/challenge.dart';
+import '../features/challenges/data/local_challenge_repository.dart';
 import 'firebase_auth_service.dart';
 
 enum GameServiceErrorCode {
@@ -205,6 +206,20 @@ class GamePlayer {
   final Map<String, dynamic> data;
 }
 
+class GeneratedRound {
+  const GeneratedRound({
+    required this.currentRound,
+    required this.selectedChallengeType,
+    required this.selectedPlayerUids,
+    required this.selectedChallengeId,
+  });
+
+  final int currentRound;
+  final ChallengeType selectedChallengeType;
+  final List<String> selectedPlayerUids;
+  final String selectedChallengeId;
+}
+
 /// Centralizes Firestore access for games and their player subcollections.
 abstract interface class GameCreator {
   Future<Game> createGame({
@@ -242,9 +257,11 @@ class GameService implements GameClient {
     FirebaseFirestore? firestore,
     FirebaseAuthService? authService,
     Random? random,
+    LocalChallengeRepository? challengeRepository,
   }) : _firestore = firestore ?? FirebaseFirestore.instance,
        _auth = authService ?? FirebaseAuthService(),
-       _random = random ?? Random.secure();
+       _random = random ?? Random.secure(),
+       _challengeRepository = challengeRepository ?? LocalChallengeRepository();
 
   static const gamesCollection = 'games';
   static const playersCollection = 'players';
@@ -268,6 +285,7 @@ class GameService implements GameClient {
   final FirebaseFirestore _firestore;
   final FirebaseAuthService _auth;
   final Random _random;
+  final LocalChallengeRepository _challengeRepository;
   @override
   String? get currentUserId => _auth.currentUserId;
   CollectionReference<Map<String, dynamic>> get _games =>
@@ -405,6 +423,74 @@ class GameService implements GameClient {
         updatedAtField: FieldValue.serverTimestamp(),
       });
     });
+  });
+
+  /// Selects an entire round locally and publishes it with one game update.
+  Future<GeneratedRound> generateRound(String gameId) => _guard(() async {
+    _validateId(gameId);
+    final reference = _games.doc(gameId);
+    final gameSnapshot = await reference.get();
+    if (!gameSnapshot.exists) {
+      throw const GameServiceException(
+        GameServiceErrorCode.gameNotFound,
+        'The game does not exist.',
+      );
+    }
+    final game = Game.fromSnapshot(gameSnapshot);
+    if (game.status != GameStatus.inProgress) {
+      throw const GameServiceException(
+        GameServiceErrorCode.invalidState,
+        'Only an in-progress game can generate a round.',
+      );
+    }
+    final playerSnapshot = await reference.collection(playersCollection).get();
+    final players = playerSnapshot.docs.map(GamePlayer.fromSnapshot).toList();
+    if (players.isEmpty) {
+      throw const GameServiceException(
+        GameServiceErrorCode.invalidState,
+        'Cannot generate a round without players.',
+      );
+    }
+    final type = ChallengeType.values[_random.nextInt(ChallengeType.values.length)];
+    final requiredCount = type == ChallengeType.pvp ? 2 : 1;
+    if (players.length < requiredCount) {
+      throw const GameServiceException(
+        GameServiceErrorCode.invalidState,
+        'A PvP round requires at least two players.',
+      );
+    }
+    // Partial Fisher-Yates gives every eligible player an equal chance.
+    for (var i = 0; i < requiredCount; i++) {
+      final swapIndex = i + _random.nextInt(players.length - i);
+      final player = players[i];
+      players[i] = players[swapIndex];
+      players[swapIndex] = player;
+    }
+    final selectedPlayers = players.take(requiredCount).map((p) => p.id).toList();
+    final challenges = (await _challengeRepository.loadChallenges())
+        .where((challenge) => challenge.type == type)
+        .toList();
+    if (challenges.isEmpty) {
+      throw GameServiceException(
+        GameServiceErrorCode.invalidState,
+        'No challenges are available for ${type.name}.',
+      );
+    }
+    final challenge = challenges[_random.nextInt(challenges.length)];
+    final round = GeneratedRound(
+      currentRound: game.currentRound + 1,
+      selectedChallengeType: type,
+      selectedPlayerUids: List.unmodifiable(selectedPlayers),
+      selectedChallengeId: challenge.id,
+    );
+    await reference.update({
+      currentRoundField: round.currentRound,
+      selectedChallengeTypeField: type.name,
+      selectedPlayerUidsField: round.selectedPlayerUids,
+      selectedChallengeIdField: challenge.id,
+      updatedAtField: FieldValue.serverTimestamp(),
+    });
+    return round;
   });
 
   @override
