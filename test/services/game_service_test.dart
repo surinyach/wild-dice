@@ -384,6 +384,22 @@ void main() {
   });
 
   group('round state mapping', () {
+    for (final type in [ChallengeType.normal, ChallengeType.wild]) {
+      test('deserializes a single-player ${type.name} selection', () async {
+        final game = await service.createGame(nickname: 'Host', avatarId: 'a');
+        await firestore.collection('games').doc(game.id).update({
+          GameService.selectedChallengeTypeField: type.name,
+          GameService.selectedPlayerUidsField: ['selected-player'],
+          GameService.selectedChallengeIdField: 'challenge-1',
+        });
+
+        final mapped = await service.watchGame(game.id).first;
+        expect(mapped?.selectedChallengeType, type);
+        expect(mapped?.selectedPlayerUids, ['selected-player']);
+        expect(mapped?.selectedChallengeId, 'challenge-1');
+      });
+    }
+
     test('deserializes an ordered valid selection', () async {
       final game = await service.createGame(nickname: 'Host', avatarId: 'a');
       await firestore.collection('games').doc(game.id).update({
